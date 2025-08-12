@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
+import io
+import contextlib
 from dotenv import load_dotenv
 from api_siga import ApiSigaClient
 from api_siga.services import SigaServices
@@ -13,7 +15,24 @@ import requests
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 
 
+@contextlib.contextmanager
+def _maybe_silent(verbose: bool):
+    """
+    Si verbose=False, redirige stdout/err a un buffer para evitar respuestas enormes.
+    """
+    if verbose:
+        yield
+    else:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            yield
+
+
 def _get_tokens():
+    """
+    Carga variables de entorno, obtiene access_token y TOKEN de autenticación SIGA.
+    Retorna (services, access_token, token_autenticacion).
+    """
     load_dotenv()
     BASE_URL   = os.getenv("BASE_URL")
     CLIENT_ID  = os.getenv("CLIENT_ID")
@@ -45,43 +64,77 @@ def _get_tokens():
     return services, access_token, token_autenticacion
 
 
-def run_option2() -> dict:
-    services, access_token, token_autenticacion = _get_tokens()
+def run_option2(verbose: bool = False) -> dict:
+    """
+    Opción 2:
+    - Consultar reporte 1003
+    - Generar CSV de Moodle
+    - Validaciones internas
+    - Procesar lotes
+    - Matricular en Moodle
+    """
+    with _maybe_silent(verbose):
+        services, access_token, token_autenticacion = _get_tokens()
 
-    resultado = services.consultar_reporte_1003(access_token, token_autenticacion)
-    guardar_excel(resultado, "reporte_1003")
+        # 1003
+        resultado = services.consultar_reporte_1003(access_token, token_autenticacion)
+        guardar_excel(resultado, "reporte_1003")
 
-    generar_csv_con_informacion("output/reporte_1003.xlsx")
+        # CSV de Moodle (a partir del 1003 generado)
+        generar_csv_con_informacion("output/reporte_1003.xlsx")
 
-    comparar_documentos_y_generar_faltantes()
-    verificar_usuarios_individualmente()
+        # Validaciones internas
+        comparar_documentos_y_generar_faltantes()
+        verificar_usuarios_individualmente()
 
-    procesar_archivo("output/usuarios_no_matriculados.csv", moodle_manager=None)
+        # Procesar archivo para lotes
+        procesar_archivo("output/usuarios_no_matriculados.csv", moodle_manager=None)
 
-    moodle_manager = MoodleManager()
-    moodle_manager.matricular_usuarios("output/resultado_lotes.csv")
+        # Matricular en Moodle
+        moodle_manager = MoodleManager()
+        moodle_manager.matricular_usuarios("output/resultado_lotes.csv")
 
-    return {"ok": True, "step": "option2", "outputs": [
-        "output/reporte_1003.xlsx",
-        "output/usuarios_no_matriculados.csv",
-        "output/resultado_lotes.csv"
-    ]}
+    return {
+        "ok": True,
+        "step": "option2",
+        "outputs": [
+            "output/reporte_1003.xlsx",
+            "output/usuarios_no_matriculados.csv",
+            "output/resultado_lotes.csv",
+        ],
+    }
 
 
-def run_option5(periodo_992: int) -> dict:
-    services, access_token, token_autenticacion = _get_tokens()
+def run_option5(periodo_992: int, verbose: bool = False) -> dict:
+    """
+    Opción 5:
+    - Consultar 1003
+    - Consultar 992 (cod_periodo_academico=periodo_992)
+    - Extraer columnas del 1003
+    - Combinar reportes
+    """
+    with _maybe_silent(verbose):
+        services, access_token, token_autenticacion = _get_tokens()
 
-    res_1003 = services.consultar_reporte_1003(access_token, token_autenticacion)
-    guardar_excel(res_1003, "reporte_1003")
+        # 1003
+        res_1003 = services.consultar_reporte_1003(access_token, token_autenticacion)
+        guardar_excel(res_1003, "reporte_1003")
 
-    res_992 = services.consultar_reporte_992(access_token, token_autenticacion,
-                                             cod_periodo_academico=periodo_992)
-    guardar_excel(res_992, "reporte_992")
+        # 992
+        res_992 = services.consultar_reporte_992(
+            access_token, token_autenticacion, cod_periodo_academico=periodo_992
+        )
+        guardar_excel(res_992, "reporte_992")
 
-    extraer_columnas_reporte_1003()
-    combinar_reportes()
+        # Post-procesos
+        extraer_columnas_reporte_1003()
+        combinar_reportes()
 
-    return {"ok": True, "step": "option5", "outputs": [
-        "output/reporte_1003.xlsx",
-        "output/reporte_992.xlsx"
-    ]}
+    return {
+        "ok": True,
+        "step": "option5",
+        "outputs": [
+            "output/reporte_1003.xlsx",
+            "output/reporte_992.xlsx",
+        ],
+    }
