@@ -18,11 +18,3 @@ services:
         sync: false
       - key: SECRET_KEY
         sync: false
-
-  - type: cron
-    name: siga-option2-hourly
-    env: python
-    plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: python tasks.py option2
-    schedule: "0 * * * *"
