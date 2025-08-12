@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: siga-runner-web
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: BASE_URL
+        sync: false
+      - key: CLIENT_ID
+        sync: false
+      - key: SECRETO
+        sync: false
+      - key: USERNAME_PRUEBA
+        sync: false
+      - key: PASSWORD_PRUEBA
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+
+  - type: cron
+    name: siga-option2-hourly
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python tasks.py option2
+    schedule: "0 * * * *"

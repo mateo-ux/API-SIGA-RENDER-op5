@@ -1,0 +1,8 @@
+fastapi
+openpyxl
+pandas
+python-dotenv
+requests
+requests-toolbelt
+requests_toolbelt
+uvicorn[standard]
