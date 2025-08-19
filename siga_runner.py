@@ -5,14 +5,21 @@ from dotenv import load_dotenv
 
 from api_siga import ApiSigaClient
 from api_siga.services import SigaServices
-# Import mínimo y seguro a nivel de módulo: solo algo que sabemos que existe
-from api_siga.utils import guardar_json
+from api_siga.utils import (
+    MoodleManager,
+    guardar_json,
+    generar_csv_con_informacionj,
+    comparar_documentos_y_generar_faltantesj,
+    verificar_usuarios_individualmentej,
+    procesar_archivoj,
+    extraer_columnas_reporte_1003j,
+    combinar_reportesj,
+)
 
 import requests
-from requests_toolbelt.multipart_encoder import MultipartEncoder
+from requests_toolbelt.multipart.encoder import MultipartEncoder  # <- IMPORT CORRECTO
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-
 
 logger = logging.getLogger("siga")
 
@@ -53,16 +60,15 @@ def _get_tokens():
             "BASE_URL, CLIENT_ID, SECRETO, USERNAME_PRUEBA, PASSWORD_PRUEBA"
         )
 
-    logger.info("Auth: generando access_token...")
+    logger.info("Auth: generando access_token…")
     cliente = ApiSigaClient(BASE_URL, CLIENT_ID, SECRETO)
     access_token = cliente.generar_token()
     if not access_token:
         raise RuntimeError("No se pudo obtener el token de acceso.")
 
-    logger.info("Auth: autenticando usuario SIGA...")
+    logger.info("Auth: autenticando en SIGA…")
     url_autenticar = f"{BASE_URL}/talentotech2/autenticar"
     headers = {"auth_token": access_token}
-
     data = MultipartEncoder(fields={"username": USERNAME, "password": PASSWORD})
     headers["Content-Type"] = data.content_type
 
@@ -75,57 +81,47 @@ def _get_tokens():
 
     token_autenticacion = auth_response.get("TOKEN")
     services = SigaServices(cliente)
-    logger.info("Auth: OK")
+    logger.info("Auth OK")
     return services, access_token, token_autenticacion
 
 
 def run_option2() -> dict:
     """
-    Opción 2 (JSON-only):
-    - Consultar reporte 1003 -> guardar_json(output/reporte_1003.json)
-    - Generar archivo modificado para Moodle -> generar_csv_con_informacionj("output/reporte_1003.json")
-      (esta utilidad crea también el .json modificado)
-    - Comparar contra 'Prueba de nivelacion Padre.json' -> comparar_documentos_y_generar_faltantesj()
-    - Verificar usuarios en Moodle -> verificar_usuarios_individualmentej()
-    - Procesar lotes -> procesar_archivoj('output/usuarios_no_matriculados.json')
-    - Matricular en Moodle -> MoodleManager().matricular_usuarios('output/resultado_lotes.json')
+    Flujo JSON:
+    1) Consulta 1003 -> guarda output/reporte_1003.json
+    2) Genera output/reporte_1003_modificado.json (formato Moodle)
+    3) Compara con 'Padre' -> genera faltantes JSON
+    4) Verificación individual -> genera usuarios_no_matriculados.json
+    5) Asigna lotes -> resultado_lotes.json
+    6) Matricula en Moodle desde resultado_lotes.json
     """
     logger.info("Option2: START")
     _ensure_output_dir()
 
     services, access_token, token_autenticacion = _get_tokens()
 
-    logger.info("Option2: consultando reporte 1003...")
-    resultado = services.consultar_reporte_1003(access_token, token_autenticacion)
-    guardar_json(resultado, "reporte_1003")  # -> output/reporte_1003.json
+    logger.info("Option2: consultando reporte 1003…")
+    res_1003 = services.consultar_reporte_1003(access_token, token_autenticacion)
+    guardar_json(res_1003, "reporte_1003")  # -> output/reporte_1003.json
 
-    # Imports locales (evitan romper el import del módulo si faltara algo en utils)
-    from api_siga.utils import (
-        MoodleManager,
-        generar_csv_con_informacionj,
-        comparar_documentos_y_generar_faltantesj,
-        verificar_usuarios_individualmentej,
-        procesar_archivoj,
-    )
+    logger.info("Option2: generando estructura Moodle (JSON)…")
+    generar_csv_con_informacionj("output/reporte_1003.json")  # crea *_modificado.json
 
-    logger.info("Option2: generando archivo modificado (JSON) desde 1003...")
-    # Esta función debe leer 'output/reporte_1003.json' y escribir 'output/reporte_1003_modificado.json'
-    generar_csv_con_informacionj("output/reporte_1003.json")
-
-    logger.info("Option2: validaciones internas (comparar faltantes)...")
+    logger.info("Option2: comparando y generando faltantes (JSON)…")
     comparar_documentos_y_generar_faltantesj()
 
-    logger.info("Option2: verificación individual en Moodle...")
+    logger.info("Option2: verificación individual (JSON)…")
     verificar_usuarios_individualmentej()
 
-    logger.info("Option2: procesando lotes (usuarios no matriculados -> lotes)...")
+    logger.info("Option2: asignando lotes (JSON)…")
     procesar_archivoj("output/usuarios_no_matriculados.json", moodle_manager=None)
 
-    logger.info("Option2: matriculando en Moodle desde resultado_lotes.json...")
-    moodle_manager = MoodleManager()
-    moodle_manager.matricular_usuarios("output/resultado_lotes.json")
+    logger.info("Option2: matriculando en Moodle (JSON)…")
+    mm = MoodleManager()
+    # La versión JSON mantiene el mismo nombre si así la dejaste:
+    mm.matricular_usuarios("output/resultado_lotes.json")
 
-    logger.info("Option2: DONE ok")
+    logger.info("Option2: DONE")
     return {
         "ok": True,
         "step": "option2",
@@ -143,47 +139,36 @@ def run_option2() -> dict:
 
 def run_option5(periodo_992: int) -> dict:
     """
-    Opción 5 (JSON-only):
-    - Consultar 1003 y 992 -> guardar_json(...)
-    - (Opcional) Post-procesos: extraer_columnas_reporte_1003j + combinar_reportesj
-      Si esas utilidades no existen en utils, no se cae el server; se loguea un warning.
+    Flujo JSON:
+    1) Consulta 1003 y 992 -> guarda JSON
+    2) Post-proceso: extraer columnas 1003 (JSON) y combinar con 992 (JSON)
     """
     logger.info(f"Option5: START (periodo_992={periodo_992})")
     _ensure_output_dir()
 
     services, access_token, token_autenticacion = _get_tokens()
 
-    logger.info("Option5: consultando 1003...")
+    logger.info("Option5: consultando 1003…")
     res_1003 = services.consultar_reporte_1003(access_token, token_autenticacion)
     guardar_json(res_1003, "reporte_1003")  # -> output/reporte_1003.json
 
-    logger.info("Option5: consultando 992...")
+    logger.info("Option5: consultando 992…")
     res_992 = services.consultar_reporte_992(
         access_token, token_autenticacion, cod_periodo_academico=periodo_992
     )
     guardar_json(res_992, "reporte_992")  # -> output/reporte_992.json
 
-    combined_output = None
-    try:
-        from api_siga.utils import (
-            extraer_columnas_reporte_1003j,
-            combinar_reportesj,
-        )
-        logger.info("Option5: post-procesos (extraer columnas y combinar JSON)...")
-        extraer_columnas_reporte_1003j()
-        combined_output = combinar_reportesj()
-    except ImportError:
-        logger.warning(
-            "Option5: utilidades extraer_columnas_reporte_1003j/combinar_reportesj no están disponibles. "
-            "Se omite el post-proceso."
-        )
+    logger.info("Option5: post-procesos JSON…")
+    extraer_columnas_reporte_1003j()
+    combinar_reportesj()
 
-    logger.info("Option5: DONE ok")
-    outputs = [
-        "output/reporte_1003.json",
-        "output/reporte_992.json",
-    ]
-    if combined_output:
-        outputs.append(combined_output)
-
-    return {"ok": True, "step": "option5", "outputs": outputs}
+    logger.info("Option5: DONE")
+    return {
+        "ok": True,
+        "step": "option5",
+        "outputs": [
+            "output/reporte_1003.json",
+            "output/reporte_992.json",
+            # agrega aquí los archivos que genere tu combinar_reportesj
+        ],
+    }
