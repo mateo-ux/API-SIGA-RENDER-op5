@@ -2,50 +2,18 @@ import os
 from dotenv import load_dotenv
 from api_siga import ApiSigaClient
 from api_siga.services import SigaServices
-from api_siga.utils import MoodleManager, combinar_reportes, comparar_documentos_y_generar_faltantes, extraer_columnas_reporte_1003, generar_csv_con_informacion, print_json_bonito, guardar_excel, procesar_archivo, verificar_usuarios_individualmente
+from api_siga.utils import (
+    MoodleManager,
+    extraer_columnas_reporte_1003,      # JSON
+    generar_csv_con_informacionj,       # JSON
+    comparar_documentos_y_generar_faltantesj,  # JSON
+    verificar_usuarios_individualmentej,       # JSON
+    procesar_archivoj,                  # JSON
+    guardar_json,                       # JSON
+    combinar_reportes,                  # <-- sin "j"
+)
 
 def main():
-    load_dotenv()
-
-    BASE_URL = os.getenv("BASE_URL")
-    CLIENT_ID = os.getenv("CLIENT_ID")
-    SECRETO = os.getenv("SECRETO")
-    USERNAME = os.getenv("USERNAME_PRUEBA")
-    PASSWORD = os.getenv("PASSWORD_PRUEBA")
-
-    cliente = ApiSigaClient(BASE_URL, CLIENT_ID, SECRETO)
-    access_token = cliente.generar_token()
-
-    if not access_token:
-        print("❌ No se pudo obtener el token de acceso.")
-        return
-
-    # Autenticación (con MultipartEncoder ya funcionando)
-    from requests_toolbelt.multipart.encoder import MultipartEncoder
-    import requests
-
-    url_autenticar = f"{BASE_URL}/talentotech2/autenticar"
-    headers = {"auth_token": access_token}
-    data = MultipartEncoder(fields={"username": USERNAME, "password": PASSWORD})
-    headers["Content-Type"] = data.content_type
-
-    try:
-        response = requests.post(url_autenticar, headers=headers, data=data)
-        response.raise_for_status()
-        auth_response = response.json()
-    except Exception as e:
-        print("❌ Error al autenticar:", e)
-        return
-
-    if auth_response.get("RESPUESTA") != "1":
-        print("❌ Error al autenticar:", auth_response)
-        return
-
-    token_autenticacion = auth_response.get("TOKEN")
-    print("✅ Autenticación correcta.")
-
-    services = SigaServices(cliente)
-
     # Menú
     while True:
         print("\n🔍 Reporte a consultar?")
@@ -60,41 +28,87 @@ def main():
 
         if opcion == "0":
             break
+
         elif opcion == "1":
             resultado = services.consultar_reporte_622(access_token, token_autenticacion, periodo=2025011112)
-            guardar_excel(resultado, "reporte_622")
+            guardar_json(resultado, "reporte_622")
+
         elif opcion == "2":
-            # Solo cuando se selecciona la opción 2 se obtiene el reporte 1003 y los estudiantes de Moodle
+            load_dotenv()
+
+            BASE_URL = os.getenv("BASE_URL")
+            CLIENT_ID = os.getenv("CLIENT_ID")
+            SECRETO = os.getenv("SECRETO")
+            USERNAME = os.getenv("USERNAME_PRUEBA")
+            PASSWORD = os.getenv("PASSWORD_PRUEBA")
+
+            cliente = ApiSigaClient(BASE_URL, CLIENT_ID, SECRETO)
+            access_token = cliente.generar_token()
+
+            if not access_token:
+                print("❌ No se pudo obtener el token de acceso.")
+                return
+
+            # Autenticación (con MultipartEncoder ya funcionando)
+            from requests_toolbelt.multipart.encoder import MultipartEncoder
+            import requests
+
+            url_autenticar = f"{BASE_URL}/talentotech2/autenticar"
+            headers = {"auth_token": access_token}
+            data = MultipartEncoder(fields={"username": USERNAME, "password": PASSWORD})
+            headers["Content-Type"] = data.content_type
+
+            try:
+                response = requests.post(url_autenticar, headers=headers, data=data)
+                response.raise_for_status()
+                auth_response = response.json()
+            except Exception as e:
+                print("❌ Error al autenticar:", e)
+                return
+
+            if auth_response.get("RESPUESTA") != "1":
+                print("❌ Error al autenticar:", auth_response)
+                return
+
+            token_autenticacion = auth_response.get("TOKEN")
+            print("✅ Autenticación correcta.")
+
+            services = SigaServices(cliente)
+            # Flujo 100% JSON
             resultado = services.consultar_reporte_1003(access_token, token_autenticacion)
-            guardar_excel(resultado, "reporte_1003")
-            
-            # Generar CSV de los datos de Moodle
-            generar_csv_con_informacion("output/reporte_1003.xlsx")
+            guardar_json(resultado, "reporte_1003")
 
-            #validacion interna 
-            comparar_documentos_y_generar_faltantes()
-            
-            verificar_usuarios_individualmente()
-            
-            # Ejemplo de uso: pasar la ruta del archivo CSV
-            procesar_archivo('output/usuarios_no_matriculados.csv', moodle_manager=None)
+            generar_csv_con_informacionj("output/reporte_1003.json")
+            comparar_documentos_y_generar_faltantesj()
+            verificar_usuarios_individualmentej()
 
+            # Procesa usuarios NO matriculados -> genera output/resultado_lotes.json
+            procesar_archivoj('output/usuarios_no_matriculados.json', moodle_manager=None)
 
+            # Matriculación en Moodle desde JSON
             moodle_manager = MoodleManager()
-            moodle_manager.matricular_usuarios('output/resultado_lotes.csv')
+            moodle_manager.matricular_usuarios('output/resultado_lotes.json')
+            
+
         elif opcion == "3":
             resultado = services.consultar_reporte_775(access_token, token_autenticacion, periodo=2025011112)
-            guardar_excel(resultado, "reporte_775")
+            guardar_json(resultado, "reporte_775")
+
         elif opcion == "4":
             resultado = services.consultar_reporte_997(access_token, token_autenticacion, ano_periodo=2025)
-            guardar_excel(resultado, "reporte_997")
+            guardar_json(resultado, "reporte_997")
+
         elif opcion == "5":
+            # Flujo combinado (JSON)
             resultado = services.consultar_reporte_1003(access_token, token_autenticacion)
-            guardar_excel(resultado, "reporte_1003")
+            guardar_json(resultado, "reporte_1003")
+
             resultado = services.consultar_reporte_992(access_token, token_autenticacion, cod_periodo_academico=2025011112)
-            guardar_excel(resultado, "reporte_992")
+            guardar_json(resultado, "reporte_992")
+
             extraer_columnas_reporte_1003()
-            combinar_reportes()
+            combinar_reportes()  # <-- sin "j"
+
         else:
             print("❌ Opción inválida.")
 

@@ -2,7 +2,7 @@ import os
 import requests
 import pandas as pd
 from dotenv import load_dotenv
-
+import json
 import time
 
 # Cargar las variables del archivo .env
@@ -13,8 +13,9 @@ def print_json_bonito(data):
     import json
     print(json.dumps(data, indent=2, ensure_ascii=False))
 
-def guardar_excel(data, nombre_reporte):
-    """Guarda la respuesta JSON como archivo Excel en carpeta output/"""
+
+def guardar_json(data, nombre_reporte):
+    """Guarda la respuesta JSON como archivo .json en carpeta output/"""
     if not data or not isinstance(data, list):
         print("⚠️ No hay datos válidos para exportar.")
         return
@@ -23,333 +24,579 @@ def guardar_excel(data, nombre_reporte):
     os.makedirs("output", exist_ok=True)
 
     # Generar nombre del archivo
-    filename = f"output/{nombre_reporte}.xlsx"
+    filename = f"output/{nombre_reporte}.json"
 
     # Eliminar el archivo si ya existe
     if os.path.exists(filename):
         os.remove(filename)  # Eliminar el archivo existente
 
     try:
-        # Convertir los datos a un DataFrame de pandas
-        df = pd.DataFrame(data)
-
-        # Guardar el archivo Excel
-        df.to_excel(filename, index=False)
+        # Guardar el archivo JSON con formato legible
+        with open(filename, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
         print(f"✅ Archivo guardado: {filename}")
     except Exception as e:
-        print(f"❌ Error al guardar Excel: {e}")
+        print(f"❌ Error al guardar JSON: {e}")
 
-def generar_csv_con_informacion(reporte_excel):
-    # Cargar el archivo Excel generado previamente
+import os
+import json
+import pandas as pd
+
+def generar_csv_con_informacionj(reporte_excel):
+    """
+    Nueva versión JSON-first:
+    - Entrada: ruta a .xlsx (actual) o .json con las mismas columnas.
+    - Salida: output/<base>_modificado.json con la estructura para Moodle.
+    - Retorna: (ruta_json_salida, rows_en_memoria)
+
+    Estructura de salida (list[dict]):
+      idnumber, username, password, firstname, lastname, phone1, email,
+      profile_field_departamento, profile_field_municipio, profile_field_modalidad,
+      group1, course1, role1
+    """
     try:
-        df = pd.read_excel(reporte_excel)
+        if not isinstance(reporte_excel, str) or not os.path.exists(reporte_excel):
+            print("⚠️ La ruta del reporte no existe o no es válida.")
+            return None, []
 
-        # Verificar que las columnas necesarias existan en el archivo
-        required_columns = ['documento_numero', 'nombres', 'apellidos', 'telefono_celular', 'correo_electronico', 
-                            'departamento', 'municipio', 'modalidad_formacion', 'programa_interes', 'inscripcion_aprobada']
-        
+        # Cargar origen en DataFrame
+        if reporte_excel.lower().endswith(".xlsx"):
+            df = pd.read_excel(reporte_excel)
+        elif reporte_excel.lower().endswith(".json"):
+            with open(reporte_excel, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # data puede ser list[dict] o dict con 'data'/'items'
+            if isinstance(data, dict):
+                data = data.get("data") or data.get("items") or data.get("rows") or []
+            df = pd.DataFrame(data)
+        else:
+            print("⚠️ Formato no soportado. Usa .xlsx o .json como entrada.")
+            return None, []
+
+        # Verificar columnas requeridas
+        required_columns = [
+            'documento_numero', 'nombres', 'apellidos', 'telefono_celular',
+            'correo_electronico', 'departamento', 'municipio',
+            'modalidad_formacion', 'programa_interes', 'inscripcion_aprobada'
+        ]
         if not all(col in df.columns for col in required_columns):
-            print("⚠️ Algunas columnas necesarias están ausentes en el archivo Excel.")
-            return
+            print("⚠️ Algunas columnas necesarias están ausentes en el archivo de entrada.")
+            return None, []
 
-        # Filtrar solo los registros donde 'inscripcion_aprobada' sea 'APROBADO'
-        df_aprobados = df[df['inscripcion_aprobada'] == 'APROBADO']
-
+        # Filtrar aprobados
+        df_aprobados = df[df['inscripcion_aprobada'] == 'APROBADO'].copy()
         if df_aprobados.empty:
             print("⚠️ No hay registros aprobados para exportar.")
-            return
+            # Aun así creamos un JSON vacío para mantener flujo estable
+            out_dir = "output"
+            os.makedirs(out_dir, exist_ok=True)
+            base = os.path.splitext(os.path.basename(reporte_excel))[0]
+            out_path = os.path.join(out_dir, f"{base}_modificado.json")
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump([], f, ensure_ascii=False, indent=2)
+            return out_path, []
 
-        # Mapear las columnas originales a las nuevas columnas del archivo CSV
+        # Mapeo de programa_interes
+        mapa_programa = {
+            'INTELIGENCIA ARTIFICIAL': 'Inteligencia Artificial',
+            'ANÁLISIS DE DATOS': 'Analisis_datos',
+            'PROGRAMACIÓN': 'Programacion',
+            'CIBERSEGURIDAD': 'Ciberseguridad1',
+            'ARQUITECTURA EN LA NUBE': 'Arquitectura_Nube',
+            'BLOCKCHAIN': 'Blockchain'
+        }
+
+        # Construir estructura de salida
         df_nuevo = pd.DataFrame({
-            'idnumber': df_aprobados['documento_numero'],  # Mantenemos 'documento_numero'
-            'username': df_aprobados['documento_numero'],  # Usamos 'documento_numero' también para 'username'
-            'password': df_aprobados['documento_numero'],  # Usamos 'documento_numero' también para 'password'
-            'firstname': df_aprobados['nombres'],  # 'nombres' se mapea como 'nombres'
-            'lastname': df_aprobados['apellidos'],  # 'apellidos' se mapea como 'apellidos'
-            'phone1': df_aprobados['telefono_celular'],  # 'telefono_celular' se mapea como 'telefono_celular'
-            'email': df_aprobados['correo_electronico'],  # 'correo_electronico' se mapea como 'correo_electronico'
-            'profile_field_departamento': df_aprobados['departamento'],  # 'departamento' se mapea como 'departamento'
-            'profile_field_municipio': df_aprobados['municipio'],  # 'municipio' se mapea como 'municipio'
-            'profile_field_modalidad': df_aprobados['modalidad_formacion'],  # 'modalidad_formacion' se mapea como 'modalidad_formacion'
-            'group1': df_aprobados['programa_interes'].replace({
-                'INTELIGENCIA ARTIFICIAL': 'Inteligencia Artificial',
-                'ANÁLISIS DE DATOS': 'Analisis_datos',
-                'PROGRAMACIÓN': 'Programacion',
-                'CIBERSEGURIDAD': 'Ciberseguridad1',
-                'ARQUITECTURA EN LA NUBE': 'Arquitectura_Nube',
-                'BLOCKCHAIN': 'Blockchain'
-            }),  # Mapeo del 'programa_interes' a los valores especificados
-            'course1': 'Prueba de Inicio Talento Tech',  # Agregamos columna 'course1' con valor fijo
-            'role1': 5  # Agregamos columna 'role1' con valor fijo
+            'idnumber': df_aprobados['documento_numero'].astype(str),
+            'username': df_aprobados['documento_numero'].astype(str),
+            'password': df_aprobados['documento_numero'].astype(str),
+            'firstname': df_aprobados['nombres'],
+            'lastname': df_aprobados['apellidos'],
+            'phone1': df_aprobados['telefono_celular'],
+            'email': df_aprobados['correo_electronico'],
+            'profile_field_departamento': df_aprobados['departamento'],
+            'profile_field_municipio': df_aprobados['municipio'],
+            'profile_field_modalidad': df_aprobados['modalidad_formacion'],
+            'group1': df_aprobados['programa_interes'].astype(str).str.upper().map(mapa_programa).fillna(df_aprobados['programa_interes']),
+            'course1': 'Prueba de Inicio Talento Tech',
+            'role1': 5
         })
 
-        # Guardar el DataFrame en un archivo CSV
-        archivo_csv = reporte_excel.replace('.xlsx', '_modificado.csv')
-        df_nuevo.to_csv(archivo_csv, index=False, sep=';', encoding='utf-8-sig')  # Usamos ';' como delimitador para evitar comas
+        # Guardar como JSON
+        out_dir = "output"
+        os.makedirs(out_dir, exist_ok=True)
+        base = os.path.splitext(os.path.basename(reporte_excel))[0]
+        out_path = os.path.join(out_dir, f"{base}_modificado.json")
 
-        print(f"✅ Archivo CSV generado correctamente: {archivo_csv}")
+        rows = df_nuevo.to_dict(orient="records")
+        # Sobrescribir si existe (idempotente)
+        if os.path.exists(out_path):
+            try:
+                os.remove(out_path)
+            except Exception:
+                pass
+
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(rows, f, ensure_ascii=False, indent=2)
+
+        print(f"✅ Archivo JSON generado correctamente: {out_path}")
+        return out_path, rows
 
     except Exception as e:
-        print(f"❌ Error al generar el archivo CSV: {e}")
+        print(f"❌ Error al generar el JSON: {e}")
+        return None, []
 
-
-def comparar_documentos_y_generar_faltantes():
-    try:
-        # Cargar ambos archivos
-        df_usuarios = pd.read_csv('output/reporte_1003_modificado.csv', sep=';')
-        df_nivelacion = pd.read_csv('Prueba de nivelacion Padre.csv', sep=';')
-        
-        # Verificar que las columnas necesarias existan
-        if 'idnumber' not in df_usuarios.columns:
-            print("❌ El archivo usuarios_a_verificar no tiene la columna 'documento_numero'")
-            return
-            
-        if 'username' not in df_nivelacion.columns:
-            print("❌ El archivo Prueba de nivelacion Padre no tiene la columna 'username'")
-            return
-        
-        # Convertir a string para evitar problemas de tipo de dato
-        documentos_usuarios = set(df_usuarios['idnumber'].astype(str))
-        documentos_nivelacion = set(df_nivelacion['username'].astype(str))
-        
-        # Encontrar documentos que están en usuarios_a_verificar pero no en nivelación
-        documentos_faltantes = documentos_usuarios - documentos_nivelacion
-        
-        if not documentos_faltantes:
-            print("✅ Todos los usuarios están en el archivo de nivelación")
-            return
-            
-        # Filtrar los registros originales que corresponden a los documentos faltantes
-        df_faltantes = df_usuarios[df_usuarios['idnumber'].astype(str).isin(documentos_faltantes)]
-        
-        if df_faltantes.empty:
-            print("⚠️ No se encontraron registros faltantes")
-            return
-            
-        # Guardar el resultado en un nuevo archivo
-        output_path = 'output/usuarios_faltantes_nivelacion.csv'
-        df_faltantes.to_csv(output_path, sep=';', index=False, encoding='utf-8-sig')
-        print(f"✅ Archivo generado con usuarios faltantes: {output_path}")
-        print(f"📝 Total de usuarios faltantes: {len(df_faltantes)}")
-        
-    except FileNotFoundError as e:
-        print(f"❌ Error: Archivo no encontrado - {e}")
-    except Exception as e:
-        print(f"❌ Error inesperado: {e}")
-def verificar_usuarios_individualmente():
-    """Verifica usuarios uno por uno evitando cargar todos los registros"""
-    try:
-        # 1. Cargar archivo con usuarios a verificar
-        faltantes_path = 'output/usuarios_faltantes_nivelacion.csv'
-        df_faltantes = pd.read_csv(faltantes_path, sep=';', dtype={'idnumber': str})
-        
-        # 2. Configuración Moodle
-        load_dotenv()
-        MOODLE_URL = os.getenv("MOODLE_URL")
-        MOODLE_TOKEN = os.getenv("MOODLE_TOKEN")
-        COURSE_ID = os.getenv("PRUEBA_INICIO_COURSE_ID")  # Ahora puede ser 5
-        
-        # 3. Preparar archivo de resultados
-        resultados_path = 'output/verificacion_individual_moodle.csv'
-        df_resultados = pd.DataFrame(columns=[
-            'idnumber', 'en_moodle', 'fecha_verificacion'
-        ])
-        
-        # 4. Verificar cada usuario
-        total_usuarios = len(df_faltantes)
-        print(f"\n🔍 Verificando {total_usuarios} usuarios individualmente...")
-        
-        for i, row in df_faltantes.iterrows():
-            documento = str(row['idnumber'])
-            
-            # Función para verificar un solo usuario
-            def usuario_en_moodle(documento):
-                params = {
-                    'wstoken': MOODLE_TOKEN,
-                    'wsfunction': 'core_user_get_users_by_field',
-                    'field': 'username',
-                    'values[0]': documento,
-                    'moodlewsrestformat': 'json'
-                }
-                
-                try:
-                    response = requests.get(
-                        MOODLE_URL,
-                        params=params,
-                        timeout=15
-                    )
-                    users = response.json()
-                    return len(users) > 0
-                except:
-                    return False
-            
-            # Verificar y guardar resultado
-            en_moodle = usuario_en_moodle(documento)
-            df_resultados.loc[i] = [
-                documento,
-                en_moodle,
-                pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')
-            ]
-            
-            # Mostrar progreso
-            if (i+1) % 10 == 0 or (i+1) == total_usuarios:
-                print(f"Progreso: {i+1}/{total_usuarios} | Último documento: {documento}")
-        
-        # 5. Generar reportes
-        df_resultados['en_moodle'] = df_resultados['en_moodle'].astype(bool)
-
-        # Usuarios MATRICULADOS
-        df_matriculados = df_faltantes[
-            df_faltantes['idnumber'].isin(
-                df_resultados[df_resultados['en_moodle']]['idnumber']
-            )
-        ]
-        
-        # Usuarios NO MATRICULADOS
-        df_no_matriculados = df_faltantes[
-            df_faltantes['idnumber'].isin(
-                df_resultados[~df_resultados['en_moodle']]['idnumber']
-            )
-        ]
-        
-        if not df_no_matriculados.empty:
-            no_matriculados_path = 'output/usuarios_no_matriculados.csv'
-            df_no_matriculados.to_csv(no_matriculados_path, sep=';', index=False, encoding='utf-8-sig')
-            print(f"✅ {len(df_no_matriculados)} usuarios NO matriculados guardados en {no_matriculados_path}")
-        
-        # Guardar registro completo
-        df_resultados.to_csv(resultados_path, sep=';', index=False, encoding='utf-8-sig')
-        print(f"\n📊 Reporte completo guardado en {resultados_path}")
-        
-        # 6. Agregar usuarios matriculados al archivo "Prueba de nivelacion Padre.csv"
-        if not df_matriculados.empty:
-            padre_path = 'Prueba de nivelacion Padre.csv'
-            # Cargar si ya existe, si no, crear nuevo
-            if os.path.exists(padre_path):
-                df_padre = pd.read_csv(padre_path, sep=';', dtype=str)
-            else:
-                df_padre = pd.DataFrame(columns=['username'])
-
-            nuevos = df_matriculados[['idnumber']].rename(columns={'idnumber': 'username'})
-            df_actualizado = pd.concat([df_padre, nuevos]).drop_duplicates(subset='username')
-
-            df_actualizado.to_csv(padre_path, sep=';', index=False, encoding='utf-8-sig')
-            print(f"📁 {len(nuevos)} usuarios agregados a {padre_path}")
-        
-    except Exception as e:
-        print(f"\n❌ Error: {str(e)}")
 
 
 import os
-import pandas as pd
+import json
 
-def asignar_lote(df):
-    # Contadores de filas
-    total_validas = 0
-    total_invalidas = 0
-    total_virtual = 0
-    total_presencial = 0
-    total_departamento_validos = 0
+def comparar_documentos_y_generar_faltantesj(
+    usuarios_path: str = "output/reporte_1003_modificado.json",
+    nivelacion_path: str = "Prueba de nivelacion Padre.json",
+    salida_path: str = "output/usuarios_faltantes_nivelacion.json"
+):
+    """
+    Compara usuarios (1003_modificado) vs el maestro de nivelación y genera un JSON con los faltantes.
+    Entradas:
+      - usuarios_path: JSON con campos al menos 'idnumber'
+      - nivelacion_path: JSON maestro con campo 'username'
+    Salida:
+      - salida_path: JSON con las filas de usuarios que faltan en nivelación
+    """
+    try:
+        # ---- Cargar usuarios (1003_modificado) ----
+        if not os.path.exists(usuarios_path):
+            print(f"❌ Error: No existe {usuarios_path}")
+            return None
 
-    # Normalizar a mayúsculas sostenidas
-    df['profile_field_modalidad'] = df['profile_field_modalidad'].apply(lambda x: x.upper() if isinstance(x, str) else '')
-    
-    # Filtrar por departamentos
-    departamentos = ['ANTIOQUIA', 'CALDAS', 'CHOCÓ', 'QUINDÍO', 'RISARALDA']
+        with open(usuarios_path, "r", encoding="utf-8") as f:
+            usuarios_data = json.load(f)
 
-    # Normalizar columna 'profile_field_departamento' a mayúsculas también
-    df['profile_field_departamento'] = df['profile_field_departamento'].apply(lambda x: x.upper() if isinstance(x, str) else '')
-    
-    # Crear una columna de Lote
-    df['profile_field_lote'] = None
-
-    count_lote_1 = 0
-    count_lote_2 = 0
-
-    valid_rows = []
-    invalid_rows = []
-
-    for index, row in df.iterrows():
-        modalidad = row['profile_field_modalidad']
-        profile_field_departamento = row['profile_field_departamento']
-
-        if modalidad in ['VIRTUAL', 'PRESENCIAL']:
-            if modalidad == 'VIRTUAL':
-                total_virtual += 1
-            else:
-                total_presencial += 1
-
-            if profile_field_departamento in departamentos:
-                total_departamento_validos += 1
-
-                if count_lote_1 <= count_lote_2:
-                    df.at[index, 'profile_field_lote'] = 'Lote 1'
-                    count_lote_1 += 1
-                else:
-                    df.at[index, 'profile_field_lote'] = 'Lote 2'
-                    count_lote_2 += 1
-
-                valid_rows.append(index)
-                total_validas += 1
-            else:
-                invalid_rows.append(index)
-                total_invalidas += 1
+        # Normalizar a list[dict]
+        if isinstance(usuarios_data, dict):
+            usuarios_rows = usuarios_data.get("rows") or usuarios_data.get("data") or usuarios_data.get("items") or []
         else:
-            invalid_rows.append(index)
-            total_invalidas += 1
+            usuarios_rows = usuarios_data
 
-    df_valid = df.loc[valid_rows].copy()
-    df_invalid = df.loc[invalid_rows].copy()
+        if not isinstance(usuarios_rows, list) or (usuarios_rows and not isinstance(usuarios_rows[0], dict)):
+            print("❌ Formato inválido en usuarios (se esperaba list[dict]).")
+            return None
 
-    print(f"Total filas procesadas: {len(df)}")
-    print(f"Filas válidas: {total_validas}")
-    print(f"Filas inválidas: {total_invalidas}")
-    print(f"Total Virtual: {total_virtual}")
-    print(f"Total Presencial: {total_presencial}")
-    print(f"Filas con departamentos válidos: {total_departamento_validos}")
+        if not usuarios_rows:
+            print("⚠️ El archivo de usuarios está vacío.")
+            # Creamos salida vacía para mantener flujo
+            os.makedirs(os.path.dirname(salida_path), exist_ok=True)
+            with open(salida_path, "w", encoding="utf-8") as f:
+                json.dump([], f, ensure_ascii=False, indent=2)
+            return salida_path
+
+        # Validar columna requerida
+        if "idnumber" not in usuarios_rows[0]:
+            print("❌ El JSON de usuarios no contiene la clave 'idnumber'.")
+            return None
+
+        # ---- Cargar nivelación (maestro) ----
+        if not os.path.exists(nivelacion_path):
+            print(f"❌ Error: No existe {nivelacion_path}")
+            return None
+
+        with open(nivelacion_path, "r", encoding="utf-8") as f:
+            nivelacion_data = json.load(f)
+
+        if isinstance(nivelacion_data, dict):
+            nivelacion_rows = nivelacion_data.get("rows") or nivelacion_data.get("data") or nivelacion_data.get("items") or []
+        else:
+            nivelacion_rows = nivelacion_data
+
+        if not isinstance(nivelacion_rows, list) or (nivelacion_rows and not isinstance(nivelacion_rows[0], dict)):
+            print("❌ Formato inválido en nivelación (se esperaba list[dict]).")
+            return None
+
+        if not nivelacion_rows:
+            print("⚠️ El maestro de nivelación está vacío; todos los usuarios serán faltantes.")
+
+        # Validar columna requerida
+        if nivelacion_rows and "username" not in nivelacion_rows[0]:
+            print("❌ El JSON de nivelación no contiene la clave 'username'.")
+            return None
+
+        # ---- Calcular faltantes ----
+        documentos_usuarios = {str(u.get("idnumber", "")).strip() for u in usuarios_rows if u.get("idnumber") not in (None, "")}
+        documentos_nivelacion = {str(n.get("username", "")).strip() for n in nivelacion_rows if n.get("username") not in (None, "")}
+
+        documentos_faltantes = documentos_usuarios - documentos_nivelacion
+
+        if not documentos_faltantes:
+            print("✅ Todos los usuarios están en el maestro de nivelación.")
+            # Generamos igualmente un JSON vacío
+            os.makedirs(os.path.dirname(salida_path), exist_ok=True)
+            with open(salida_path, "w", encoding="utf-8") as f:
+                json.dump([], f, ensure_ascii=False, indent=2)
+            return salida_path
+
+        faltantes_rows = [u for u in usuarios_rows if str(u.get("idnumber", "")).strip() in documentos_faltantes]
+
+        if not faltantes_rows:
+            print("⚠️ No se encontraron registros faltantes (posible inconsistencia de datos).")
+            os.makedirs(os.path.dirname(salida_path), exist_ok=True)
+            with open(salida_path, "w", encoding="utf-8") as f:
+                json.dump([], f, ensure_ascii=False, indent=2)
+            return salida_path
+
+        # ---- Guardar salida JSON ----
+        os.makedirs(os.path.dirname(salida_path), exist_ok=True)
+        # Sobrescribir si ya existe
+        try:
+            if os.path.exists(salida_path):
+                os.remove(salida_path)
+        except Exception:
+            pass
+
+        with open(salida_path, "w", encoding="utf-8") as f:
+            json.dump(faltantes_rows, f, ensure_ascii=False, indent=2)
+
+        print(f"✅ Archivo generado con usuarios faltantes: {salida_path}")
+        print(f"📝 Total de usuarios faltantes: {len(faltantes_rows)}")
+        return salida_path
+
+    except FileNotFoundError as e:
+        print(f"❌ Error: Archivo no encontrado - {e}")
+        return None
+    except Exception as e:
+        print(f"❌ Error inesperado: {e}")
+        return None
+
+import os
+import json
+import requests
+import pandas as pd
+from datetime import datetime
+from dotenv import load_dotenv
+
+def verificar_usuarios_individualmentej(
+    faltantes_path: str = "output/usuarios_faltantes_nivelacion.json",
+    resultados_path: str = "output/verificacion_individual_moodle.json",
+    no_matriculados_path: str = "output/usuarios_no_matriculados.json",
+    maestro_path: str = "Prueba de nivelacion Padre.json"
+):
+    """
+    Verifica usuarios faltantes en Moodle uno por uno y genera:
+      - output/verificacion_individual_moodle.json (reporte completo)
+      - output/usuarios_no_matriculados.json (subset)
+      - Actualiza Prueba de nivelacion Padre.json agregando 'username' de los matriculados.
+    Entradas:
+      - faltantes_path: JSON con al menos la clave 'idnumber' por registro.
+    """
+    try:
+        # 1) Cargar usuarios faltantes (JSON)
+        if not os.path.exists(faltantes_path):
+            print(f"❌ No existe {faltantes_path}")
+            return
+
+        with open(faltantes_path, "r", encoding="utf-8") as f:
+            faltantes_data = json.load(f)
+
+        if isinstance(faltantes_data, dict):
+            faltantes_rows = faltantes_data.get("rows") or faltantes_data.get("data") or faltantes_data.get("items") or []
+        else:
+            faltantes_rows = faltantes_data
+
+        if not isinstance(faltantes_rows, list):
+            print("❌ Formato inválido en faltantes (se esperaba list[dict]).")
+            return
+
+        df_faltantes = pd.DataFrame(faltantes_rows)
+        if df_faltantes.empty or "idnumber" not in df_faltantes.columns:
+            print("⚠️ 'faltantes' vacío o sin columna 'idnumber'.")
+            # Aun así dejar archivos consistentes
+            os.makedirs(os.path.dirname(resultados_path), exist_ok=True)
+            with open(resultados_path, "w", encoding="utf-8") as f:
+                json.dump([], f, ensure_ascii=False, indent=2)
+            with open(no_matriculados_path, "w", encoding="utf-8") as f:
+                json.dump([], f, ensure_ascii=False, indent=2)
+            return
+
+        # 2) Configuración Moodle
+        load_dotenv()
+        MOODLE_URL = os.getenv("MOODLE_URL")  # En tu .env ya apunta a .../webservice/rest/server.php
+        MOODLE_TOKEN = os.getenv("MOODLE_TOKEN")
+        COURSE_ID = os.getenv("PRUEBA_INICIO_COURSE_ID", "5")  # por defecto 5
+
+        if not MOODLE_URL or not MOODLE_TOKEN:
+            print("❌ Faltan MOODLE_URL/MOODLE_TOKEN en el .env")
+            return
+
+        session = requests.Session()
+
+        def usuario_en_moodle(documento: str) -> bool:
+            params = {
+                'wstoken': MOODLE_TOKEN,
+                'wsfunction': 'core_user_get_users_by_field',
+                'field': 'username',
+                'values[0]': documento,
+                'moodlewsrestformat': 'json'
+            }
+            try:
+                r = session.get(MOODLE_URL, params=params, timeout=15)
+                users = r.json()
+                return isinstance(users, list) and len(users) > 0
+            except Exception:
+                return False
+
+        # 3) Verificar cada usuario
+        total_usuarios = len(df_faltantes)
+        print(f"\n🔍 Verificando {total_usuarios} usuarios individualmente...")
+
+        resultados = []
+        for i, row in df_faltantes.iterrows():
+            documento = str(row['idnumber'])
+            en_moodle = usuario_en_moodle(documento)
+            resultados.append({
+                "idnumber": documento,
+                "en_moodle": bool(en_moodle),
+                "fecha_verificacion": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            })
+
+            if (i + 1) % 10 == 0 or (i + 1) == total_usuarios:
+                print(f"Progreso: {i+1}/{total_usuarios} | Último documento: {documento}")
+
+        df_resultados = pd.DataFrame(resultados)
+
+        # 4) Separar matriculados / no matriculados
+        df_matriculados = df_faltantes[
+            df_faltantes['idnumber'].isin(
+                df_resultados[df_resultados['en_moodle'] == True]['idnumber']
+            )
+        ]
+        df_no_matriculados = df_faltantes[
+            df_faltantes['idnumber'].isin(
+                df_resultados[df_resultados['en_moodle'] == False]['idnumber']
+            )
+        ]
+
+        # 5) Guardar salidas como JSON
+        os.makedirs(os.path.dirname(resultados_path), exist_ok=True)
+
+        with open(resultados_path, "w", encoding="utf-8") as f:
+            json.dump(df_resultados.to_dict(orient="records"), f, ensure_ascii=False, indent=2)
+        print(f"📊 Reporte completo guardado en {resultados_path}")
+
+        with open(no_matriculados_path, "w", encoding="utf-8") as f:
+            json.dump(df_no_matriculados.to_dict(orient="records"), f, ensure_ascii=False, indent=2)
+        print(f"✅ {len(df_no_matriculados)} usuarios NO matriculados guardados en {no_matriculados_path}")
+
+        # 6) Actualizar maestro de nivelación (JSON) con los matriculados
+        if not df_matriculados.empty:
+            # Cargar maestro actual
+            if os.path.exists(maestro_path):
+                with open(maestro_path, "r", encoding="utf-8") as f:
+                    maestro_data = json.load(f)
+                if isinstance(maestro_data, dict):
+                    maestro_rows = maestro_data.get("rows") or maestro_data.get("data") or maestro_data.get("items") or []
+                else:
+                    maestro_rows = maestro_data
+            else:
+                maestro_rows = []
+
+            # Normalizar maestro a lista de dicts con 'username'
+            if not isinstance(maestro_rows, list):
+                maestro_rows = []
+            # Conjunto existente
+            existentes = {str(r.get("username", "")).strip() for r in maestro_rows if isinstance(r, dict)}
+
+            nuevos = []
+            for doc in df_matriculados['idnumber'].astype(str):
+                u = doc.strip()
+                if u and u not in existentes:
+                    nuevos.append({"username": u})
+
+            if nuevos:
+                maestro_rows.extend(nuevos)
+                # Guardar maestro actualizado
+                with open(maestro_path, "w", encoding="utf-8") as f:
+                    json.dump(maestro_rows, f, ensure_ascii=False, indent=2)
+                print(f"📁 {len(nuevos)} usuarios agregados a {maestro_path}")
+            else:
+                print("ℹ️ No había usuarios nuevos para agregar al maestro.")
+
+    except Exception as e:
+        print(f"\n❌ Error: {str(e)}")
+import os
+import json
+import pandas as pd
+# Si quieres normalizar acentos en departamento/modalidad, descomenta:
+# import unicodedata
+
+def _load_json_rows(path: str):
+    """Carga JSON tolerante a BOM y devuelve list[dict].
+       Acepta: list[dict] o dict con claves 'rows'/'data'/'items'/'result'."""
+    with open(path, "r", encoding="utf-8-sig") as f:  # <- clave contra BOM
+        data = json.load(f)
+
+    if isinstance(data, dict):
+        for key in ("rows", "data", "items", "result"):
+            if key in data and isinstance(data[key], list):
+                return data[key]
+        # Si es dict pero no trae lista, intenta convertir a lista de un solo elemento
+        return [data] if data else []
+    elif isinstance(data, list):
+        return data
+    else:
+        return []
+
+def asignar_lote(df: pd.DataFrame):
+    """
+    Valida registros y asigna lotes (Lote 1 / Lote 2) balanceados.
+    Requisitos:
+      - Columnas: 'profile_field_modalidad', 'profile_field_departamento'
+      - Modalidad permitida: 'VIRTUAL' o 'PRESENCIAL'
+      - Departamento permitido: ANTIOQUIA, CALDAS, CHOCÓ, QUINDÍO, RISARALDA
+
+    Retorna:
+      df_valid (con 'profile_field_lote')
+      df_invalid (con 'motivo_rechazo')
+    """
+    required_cols = {'profile_field_modalidad', 'profile_field_departamento'}
+    missing = required_cols - set(df.columns)
+    if missing:
+        raise ValueError(f"Faltan columnas requeridas: {', '.join(sorted(missing))}")
+
+    work = df.copy()
+
+    # Normalizaciones
+    work['profile_field_modalidad'] = work['profile_field_modalidad'].apply(
+        lambda x: str(x).strip().upper() if pd.notna(x) else ''
+    )
+    work['profile_field_departamento'] = work['profile_field_departamento'].apply(
+        lambda x: str(x).strip().upper() if pd.notna(x) else ''
+    )
+
+    # Si quieres quitar acentos para comparar (útil si la fuente a veces viene sin acentos):
+    # def _norm_up(s):
+    #     s = '' if pd.isna(s) else str(s)
+    #     s = unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode()
+    #     return s.strip().upper()
+    # work['profile_field_departamento'] = work['profile_field_departamento'].map(_norm_up)
+    # work['profile_field_modalidad']   = work['profile_field_modalidad'].map(_norm_up)
+
+    modalidades_validas = {'VIRTUAL', 'PRESENCIAL'}
+    departamentos_validos = {'ANTIOQUIA', 'CALDAS', 'CHOCÓ', 'QUINDÍO', 'RISARALDA'}
+
+    motivos = []
+    invalid_mask = pd.Series(False, index=work.index)
+
+    mask_modalidad = ~work['profile_field_modalidad'].isin(modalidades_validas)
+    invalid_mask = invalid_mask | mask_modalidad
+
+    mask_departamento = ~work['profile_field_departamento'].isin(departamentos_validos)
+    invalid_mask = invalid_mask | mask_departamento
+
+    for i, row in work.iterrows():
+        m = []
+        if mask_modalidad.loc[i]:
+            m.append(f"Modalidad inválida: {row.get('profile_field_modalidad', '')}")
+        if mask_departamento.loc[i]:
+            m.append(f"Departamento no permitido: {row.get('profile_field_departamento', '')}")
+        motivos.append(" | ".join(m) if m else "")
+
+    work['motivo_rechazo'] = motivos
+
+    df_invalid = work[invalid_mask].copy()
+    df_valid = work[~invalid_mask].copy()
+
+    # Asignación de lote (round-robin)
+    df_valid = df_valid.reset_index(drop=True)
+    if not df_valid.empty:
+        lotes = ['Lote 1' if (i % 2 == 0) else 'Lote 2' for i in range(len(df_valid))]
+        df_valid['profile_field_lote'] = lotes
+    else:
+        df_valid['profile_field_lote'] = pd.Series(dtype=object)
+
+    if 'profile_field_lote' not in df_invalid.columns:
+        df_invalid['profile_field_lote'] = ""
+
+    new_cols = []
+    for c in ['profile_field_lote']:
+        if c not in df.columns:
+            new_cols.append(c)
+
+    df_valid = df_valid[[*df.columns, *[c for c in new_cols if c in df_valid.columns]]]
+    df_invalid = df_invalid[[*df.columns, 'motivo_rechazo', *(['profile_field_lote'] if 'profile_field_lote' in df_invalid.columns else [])]]
 
     return df_valid, df_invalid
 
-def procesar_archivo(ruta_archivo, moodle_manager=None):
+def procesar_archivoj(
+    ruta_archivo: str,
+    moodle_manager=None,
+    salida_valid: str = "output/resultado_lotes.json",
+    salida_invalid: str = "output/resultado_lotes_descartados.json",
+):
+    """
+    Lee un JSON (list[dict] o dict con rows/data/items) tolerante a BOM,
+    valida columnas mínimas y asigna lotes. Genera:
+      - output/resultado_lotes.json
+      - output/resultado_lotes_descartados.json
+    """
     try:
-        df = pd.read_csv(ruta_archivo, sep=';', encoding='utf-8-sig')
+        if not isinstance(ruta_archivo, str) or not os.path.exists(ruta_archivo):
+            print("❌ La ruta del archivo no existe o no es válida.")
+            return None, None
 
+        # --- AQUÍ EL CAMBIO CLAVE: loader tolerante a BOM ---
+        rows = _load_json_rows(ruta_archivo)
+
+        if not isinstance(rows, list) or (rows and not isinstance(rows[0], dict)):
+            print("❌ Formato inválido: se esperaba una lista de objetos (list[dict]).")
+            return None, None
+
+        df = pd.DataFrame(rows)
         print("Columnas del archivo cargado:")
-        print(df.columns)
+        print(list(df.columns))
 
-        if 'profile_field_modalidad' not in df.columns or 'profile_field_departamento' not in df.columns:
-            print("❌ El archivo no contiene las columnas requeridas: 'profile_field_modalidad' y 'profile_field_departamento'.")
-            return
+        required = {'profile_field_modalidad', 'profile_field_departamento'}
+        if not required.issubset(set(df.columns)):
+            print("❌ El archivo no contiene las columnas requeridas: "
+                  "'profile_field_modalidad' y 'profile_field_departamento'.")
+            return None, None
 
         df_valid, df_invalid = asignar_lote(df)
 
-        output_dir = 'output'
+        output_dir = os.path.dirname(salida_valid) or "output"
         os.makedirs(output_dir, exist_ok=True)
 
-        # Guardar archivos CSV
-        df_valid.to_csv(f'{output_dir}/resultado_lotes.csv', index=False, sep=';', encoding='utf-8-sig')
-        print("✅ Archivo de filas válidas guardado como 'output/resultado_lotes.csv'.")
+        def _dump_json(path, payload):
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except Exception:
+                pass
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
 
-        if not df_invalid.empty:
-            df_invalid.to_csv(f'{output_dir}/resultado_lotes_descartados.csv', index=False, sep=';', encoding='utf-8-sig')
-            print("⚠️ Archivo de filas inválidas guardado como 'output/resultado_lotes_descartados.csv'.")
+        valid_rows = df_valid.to_dict(orient="records") if not df_valid.empty else []
+        _dump_json(salida_valid, valid_rows)
+        print(f"✅ Archivo de filas válidas guardado como '{salida_valid}'.")
 
-            # Registrar rechazados en Google Sheets si se proporciona moodle_manager
+        invalid_rows = df_invalid.to_dict(orient="records") if not df_invalid.empty else []
+        if invalid_rows:
+            _dump_json(salida_invalid, invalid_rows)
+            print(f"⚠️ Archivo de filas inválidas guardado como '{salida_invalid}'.")
             if moodle_manager:
                 print("\nRegistrando usuarios rechazados en Matriculados Fallidos...")
-                for _, row in df_invalid.iterrows():
+                for row in invalid_rows:
+                    modalidad = (row.get('profile_field_modalidad') or '').strip().upper()
+                    departamento = (row.get('profile_field_departamento') or '').strip().upper()
+
                     motivo = "Rechazado - "
-                    modalidad = row.get('profile_field_modalidad', '')
-                    departamento = row.get('profile_field_departamento', '')
-                    
                     if modalidad not in ['VIRTUAL', 'PRESENCIAL']:
-                        motivo += f"Modalidad inválida: {modalidad}"
+                        motivo += f"Modalidad inválida: {row.get('profile_field_modalidad', '')}"
                     elif departamento not in ['ANTIOQUIA', 'CALDAS', 'CHOCÓ', 'QUINDÍO', 'RISARALDA']:
-                        motivo += f"Departamento no permitido: {departamento}"
+                        motivo += f"Departamento no permitido: {row.get('profile_field_departamento', '')}"
                     else:
                         motivo += "Razón desconocida"
-                    
-                    # Convertir la fila a formato compatible con registrar_resultado
+
                     user_data = {
                         'username': row.get('username', ''),
                         'firstname': row.get('firstname', ''),
@@ -358,29 +605,35 @@ def procesar_archivo(ruta_archivo, moodle_manager=None):
                         'phone1': row.get('phone1', ''),
                         'idnumber': row.get('idnumber', ''),
                         'group1': row.get('group1', ''),
-                        'password': 'No aplica'  # Campo requerido pero no usado para rechazados
+                        'password': 'No aplica'
                     }
-                    
                     moodle_manager.registrar_resultado(
                         row=user_data,
                         tipo="fallido",
                         motivo=motivo,
                         grupo=row.get('group1', '')
                     )
+        else:
+            _dump_json(salida_invalid, [])
+            print("ℹ️ No hubo filas inválidas. Se creó un JSON vacío de descartados.")
+
+        return salida_valid, salida_invalid
 
     except Exception as e:
         print(f"❌ Error al procesar el archivo: {e}")
+        return None, None
+
 
 # Ejemplo de uso
-ruta_archivo = 'output/usuarios_no_matriculados.csv'
-import csv
+#ruta_archivo = 'output/usuarios_no_matriculados.csv'
 import os
-import requests
 import json
-from dotenv import load_dotenv
-from urllib.parse import urljoin
-from datetime import datetime
 import time
+import csv  # <- lo dejo por compatibilidad si en otro lado lo usas, pero no se usa aquí para IO
+import requests
+from datetime import datetime
+from urllib.parse import urljoin
+from dotenv import load_dotenv
 
 class MoodleManager:
     def __init__(self):
@@ -394,99 +647,131 @@ class MoodleManager:
         self.APPS_SCRIPT_URL = os.getenv('APPS_SCRIPT_WEBAPP_URL')
         self.SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
         self.MAX_RETRIES = 3  # Número máximo de reintentos
-        self.ARCHIVO_EXITOSOS = 'Prueba de nivelacion Padre.csv'
+
+        # ARCHIVO DE EXITOSOS -> JSON (antes: CSV)
+        self.ARCHIVO_EXITOSOS = 'Prueba de nivelacion Padre.json'
         
         if not all([self.MOODLE_URL, self.MOODLE_TOKEN, self.APPS_SCRIPT_URL, self.SHEET_ID]):
             raise ValueError("Faltan configuraciones en el archivo .env")
 
-    def matricular_usuarios(self, csv_file_path):
+    def _leer_json_lista(self, path):
+        """Lee un archivo JSON que contiene una lista (tolerante a UTF-8 con BOM)."""
+        if not os.path.exists(path):
+            return []
+        with open(path, 'r', encoding='utf-8-sig') as f:
+            data = json.load(f)
+        # Permitimos tanto list como dict con clave 'rows'/'data'/'items'
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            for key in ('rows', 'data', 'items'):
+                if key in data and isinstance(data[key], list):
+                    return data[key]
+        return []
+
+    def _escribir_json_lista(self, path, lista):
+        """Escribe una lista en JSON (crea carpetas si faltan)."""
+        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(lista, f, ensure_ascii=False, indent=2)
+
+    def matricular_usuarios(self, json_file_path):
+        """
+        Lee usuarios desde un JSON (list[dict]) y ejecuta el flujo de creación/matriculación.
+        (Antes recibía CSV; ahora JSON).
+        """
         try:
-            with open(csv_file_path, mode='r', encoding='utf-8-sig') as csvfile:
-                csv_reader = csv.DictReader(csvfile, delimiter=';')
-                usuarios = list(csv_reader)
-                print(f"\nTotal de usuarios a procesar: {len(usuarios)}")
-                
-                # Inicializar archivo de exitosos si no existe
-                if not os.path.exists(self.ARCHIVO_EXITOSOS):
-                    with open(self.ARCHIVO_EXITOSOS, mode='w', encoding='utf-8', newline='') as f:
-                        writer = csv.writer(f)
-                        writer.writerow(['username'])
-                
-                for i, row in enumerate(usuarios, 1):
-                    try:
-                        username = row['username']
-                        print(f"\n[{i}/{len(usuarios)}] Procesando usuario: {username}")
-                        
-                        # Verificar si el usuario ya existe
-                        if self.usuario_existe(username):
-                            print("⏩ Usuario ya existe, omitiendo...")
-                            self.registrar_resultado(row, "fallido", "Usuario ya existente")
-                            continue
-                            
-                        # Crear nuevo usuario
-                        try:
-                            user_id = self.crear_usuario(row)
-                            if not user_id:
-                                continue  # El error ya se registró en crear_usuario
-                                
-                            # Matricular en curso principal (ID=5)
-                            if not self.matricular_en_curso(user_id, 5, 5):
-                                self.registrar_resultado(row, "fallido", "Error en matriculación")
-                                continue
-                                
-                            # Asignar a grupo/subgrupo si está especificado
-                            grupo = row.get('group1', '').strip()
-                            if grupo and not self.asignar_a_grupo(user_id, 5, grupo):
-                                self.registrar_resultado(row, "fallido", "Error al asignar grupo")
-                                continue
-                            
-                            # Registrar éxito en Google Sheets
-                            if not self.registrar_resultado(row, "exitoso", "Matriculación exitosa", grupo):
-                                print("⚠️ No se pudo registrar el éxito en Google Sheets, pero el usuario fue creado")
-                            
-                            # Registrar username en archivo CSV de exitosos
-                            self.registrar_exitoso_csv(username)
-                            
-                        except Exception as e:
-                            error_msg = str(e)
-                            print(f"⚠️ Error al crear usuario: {error_msg}")
-                            self.registrar_resultado(row, "fallido", error_msg)
-                            continue
+            usuarios = self._leer_json_lista(json_file_path)
+            print(f"\nTotal de usuarios a procesar: {len(usuarios)}")
+            
+            # Inicializar archivo de exitosos si no existe (formato JSON: list de objetos {'username': ...})
+            if not os.path.exists(self.ARCHIVO_EXITOSOS):
+                self._escribir_json_lista(self.ARCHIVO_EXITOSOS, [])
+
+            for i, row in enumerate(usuarios, 1):
+                try:
+                    username = row.get('username', '').strip()
+                    print(f"\n[{i}/{len(usuarios)}] Procesando usuario: {username}")
                     
+                    # Verificar si el usuario ya existe
+                    if self.usuario_existe(username):
+                        print("⏩ Usuario ya existe, omitiendo...")
+                        self.registrar_resultado(row, "fallido", "Usuario ya existente")
+                        continue
+                        
+                    # Crear nuevo usuario
+                    try:
+                        user_id = self.crear_usuario(row)
+                        if not user_id:
+                            continue  # El error ya se registró en crear_usuario
+                            
+                        # Matricular en curso principal (ID=5)
+                        if not self.matricular_en_curso(user_id, 5, 5):
+                            self.registrar_resultado(row, "fallido", "Error en matriculación")
+                            continue
+                            
+                        # Asignar a grupo/subgrupo si está especificado
+                        grupo = row.get('group1', '').strip()
+                        if grupo and not self.asignar_a_grupo(user_id, 5, grupo):
+                            self.registrar_resultado(row, "fallido", "Error al asignar grupo")
+                            continue
+                        
+                        # Registrar éxito en Google Sheets
+                        if not self.registrar_resultado(row, "exitoso", "Matriculación exitosa", grupo):
+                            print("⚠️ No se pudo registrar el éxito en Google Sheets, pero el usuario fue creado")
+                        
+                        # Registrar username en archivo JSON de exitosos
+                        self.registrar_exitoso_csv(username)  # mantiene el nombre, ahora escribe JSON
+                        
                     except Exception as e:
-                        error_msg = f"Error inesperado: {str(e)}"
-                        print(f"⚠️ {error_msg}")
+                        error_msg = str(e)
+                        print(f"⚠️ Error al crear usuario: {error_msg}")
                         self.registrar_resultado(row, "fallido", error_msg)
                         continue
+                
+                except Exception as e:
+                    error_msg = f"Error inesperado: {str(e)}"
+                    print(f"⚠️ {error_msg}")
+                    self.registrar_resultado(row, "fallido", error_msg)
+                    continue
         
         except Exception as e:
             print(f"🚨 Error crítico: {str(e)}")
             raise
         finally:
-            print("\n✅ Proceso completado. Revisa los registros en Google Sheets y en el archivo CSV")
+            print("\n✅ Proceso completado. Revisa los registros en Google Sheets y en el archivo JSON de exitosos")
 
     def registrar_exitoso_csv(self, username):
-        """Registrar username en archivo CSV de exitosos"""
+        """
+        Registrar username en archivo de exitosos **JSON** (antes CSV).
+        Se mantiene el nombre del método para no romper llamadas existentes.
+        Estructura del JSON: list de objetos {'username': '<valor>'}
+        """
         try:
-            # Verificar si el username ya existe en el archivo
-            with open(self.ARCHIVO_EXITOSOS, mode='r', encoding='utf-8') as f:
-                reader = csv.reader(f)
-                if any(row and row[0] == username for row in reader):
-                    print(f"⏩ Usuario {username} ya registrado en archivo CSV")
-                    return True
+            existentes = self._leer_json_lista(self.ARCHIVO_EXITOSOS)
+            # normalizar a lista de dicts con clave 'username'
+            norm = []
+            for item in existentes:
+                if isinstance(item, dict) and 'username' in item:
+                    norm.append(item)
+                elif isinstance(item, str):
+                    norm.append({'username': item})
+            existentes = norm
+
+            if any(item.get('username') == username for item in existentes):
+                print(f"⏩ Usuario {username} ya registrado en archivo JSON")
+                return True
             
-            # Agregar nuevo username
-            with open(self.ARCHIVO_EXITOSOS, mode='a', encoding='utf-8', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow([username])
-                print(f"📝 Registrado {username} en archivo CSV de exitosos")
+            existentes.append({'username': username})
+            self._escribir_json_lista(self.ARCHIVO_EXITOSOS, existentes)
+            print(f"📝 Registrado {username} en archivo JSON de exitosos")
             return True
         except Exception as e:
-            print(f"⚠️ Error al registrar en archivo CSV: {str(e)}")
+            print(f"⚠️ Error al registrar en archivo JSON: {str(e)}")
             return False
 
     def registrar_resultado(self, row, tipo, motivo, grupo=""):
-        """Registrar resultado en Google Sheets con las columnas especificadas"""
+        """Registrar resultado en Google Sheets con las columnas especificadas (sin cambios)."""
         fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         datos = {
             "sheet_id": self.SHEET_ID,
@@ -530,8 +815,8 @@ class MoodleManager:
         print(f"❌ No se pudo registrar después de {self.MAX_RETRIES} intentos")
         return False
 
+    # --- Resto de métodos SIN CAMBIOS ---
     def usuario_existe(self, username):
-        """Verificar si el usuario ya existe en Moodle"""
         params = {
             'wstoken': self.MOODLE_TOKEN,
             'wsfunction': 'core_user_get_users_by_field',
@@ -539,7 +824,6 @@ class MoodleManager:
             'values[0]': username,
             'moodlewsrestformat': 'json'
         }
-        
         response = self.session.get(
             urljoin(self.MOODLE_URL, 'webservice/rest/server.php'),
             params=params,
@@ -549,15 +833,12 @@ class MoodleManager:
         return isinstance(users, list) and len(users) > 0
 
     def crear_usuario(self, row):
-        """Crear un nuevo usuario en Moodle con validación de parámetros"""
         campos_personalizados = {
             'profile_field_departamento': 'departamento',
             'profile_field_municipio': 'municipio', 
             'profile_field_modalidad': 'modalidad',
             'profile_field_lote': 'lote'
         }
-        
-        # Validar campos obligatorios
         campos_requeridos = ['username', 'password', 'firstname', 'lastname', 'email', 'idnumber', 'phone1']
         for campo in campos_requeridos:
             if not row.get(campo, '').strip():
@@ -577,9 +858,9 @@ class MoodleManager:
             'users[0][phone1]': row['phone1'].strip(),
             'moodlewsrestformat': 'json'
         }
-        
         for i, (csv_field, field_type) in enumerate(campos_personalizados.items()):
-            if value := row.get(csv_field, '').strip():
+            value = row.get(csv_field, '').strip()
+            if value:
                 user_data[f'users[0][customfields][{i}][type]'] = field_type
                 user_data[f'users[0][customfields][{i}][value]'] = value
         
@@ -590,27 +871,20 @@ class MoodleManager:
             headers=self.headers
         )
         result = response.json()
-        
         if isinstance(result, list) and result and 'id' in result[0]:
             print(f"✅ Usuario creado con ID: {result[0]['id']}")
             return result[0]['id']
-        
-        # Manejo específico para invalid_parameter_exception
         error_msg = self.extraer_error_moodle(result)
         if "invalid_parameter_exception" in error_msg.lower():
-            # Extraer detalles adicionales del error
             error_details = self.obtener_detalles_error_parametro(result)
             error_msg = f"Error en parámetros: {error_details}"
-        
         raise Exception(error_msg)
     
     def obtener_detalles_error_parametro(self, response):
-        """Extrae detalles específicos de errores de parámetros"""
         try:
             if isinstance(response, dict):
                 debuginfo = response.get('debuginfo', '')
                 if debuginfo:
-                    # Buscar el parámetro problemático en el debuginfo
                     import re
                     match = re.search(r'Invalid parameter value detected:(.*?)Key:', debuginfo)
                     if match:
@@ -621,10 +895,8 @@ class MoodleManager:
             return "No se pudieron extraer detalles del error de parámetro"
         
     def extraer_error_moodle(self, response):
-        """Versión mejorada para manejar invalid_parameter_exception"""
         if not response:
             return "Respuesta vacía de Moodle"
-        
         if isinstance(response, dict):
             if 'exception' in response:
                 error_msg = f"{response.get('exception', '')}: {response.get('message', '')}"
@@ -633,21 +905,18 @@ class MoodleManager:
                 return error_msg
             if 'error' in response:
                 return response['error']
-        
         if isinstance(response, list):
             if len(response) > 0 and isinstance(response[0], dict):
                 if 'warnings' in response[0]:
                     warnings = response[0]['warnings']
                     if warnings and len(warnings) > 0:
                         return warnings[0].get('message', 'Error desconocido en warnings')
-        
         try:
             return json.dumps(response, indent=2)
         except:
             return str(response)
 
     def matricular_en_curso(self, user_id, course_id, role_id):
-        """Matricular usuario en un curso específico"""
         enrol_data = {
             'wstoken': self.MOODLE_TOKEN,
             'wsfunction': 'enrol_manual_enrol_users',
@@ -657,7 +926,6 @@ class MoodleManager:
             'enrolments[0][suspend]': 0,
             'moodlewsrestformat': 'json'
         }
-        
         print(f"Matriculando en curso {course_id}...")
         response = self.session.post(
             urljoin(self.MOODLE_URL, 'webservice/rest/server.php'),
@@ -665,21 +933,17 @@ class MoodleManager:
             headers=self.headers
         )
         result = response.json()
-        
         if result is None:
             print(f"✅ Matriculado en curso {course_id} con rol {role_id}")
             return True
-        
         print(f"❌ Error en matriculación:", json.dumps(result, indent=2))
         return False
 
     def asignar_a_grupo(self, user_id, course_id, group_name):
-        """Asignar usuario a un grupo/subgrupo en el curso"""
         group_id = self.obtener_id_grupo(course_id, group_name)
         if not group_id:
             print(f"⚠️ Grupo '{group_name}' no encontrado")
             return False
-        
         group_data = {
             'wstoken': self.MOODLE_TOKEN,
             'wsfunction': 'core_group_add_group_members',
@@ -687,7 +951,6 @@ class MoodleManager:
             'members[0][groupid]': group_id,
             'moodlewsrestformat': 'json'
         }
-        
         print(f"Asignando al grupo '{group_name}'...")
         response = self.session.post(
             urljoin(self.MOODLE_URL, 'webservice/rest/server.php'),
@@ -695,52 +958,70 @@ class MoodleManager:
             headers=self.headers
         )
         result = response.json()
-        
         if result is None:
             print(f"✅ Asignado al grupo '{group_name}' (ID: {group_id})")
             return True
-        
         print(f"❌ Error al asignar al grupo:", json.dumps(result, indent=2))
         return False
 
     def obtener_id_grupo(self, course_id, group_name):
-        """Obtener el ID de un grupo existente"""
         params = {
             'wstoken': self.MOODLE_TOKEN,
             'wsfunction': 'core_group_get_course_groups',
             'courseid': course_id,
             'moodlewsrestformat': 'json'
         }
-        
         response = self.session.get(
             urljoin(self.MOODLE_URL, 'webservice/rest/server.php'),
             params=params,
             headers=self.headers
         )
         groups = response.json()
-        
         if isinstance(groups, list):
             for group in groups:
                 if group['name'] == group_name:
                     return group['id']
         return None
 
-# if __name__ == "__main__":
-#     moodle_manager = MoodleManager()
-#     moodle_manager.matricular_usuarios('output/resultado_lotes.csv')
 
+#if __name__ == "__main__":
+     #moodle_manager = MoodleManager()
+     #moodle_manager.matricular_usuarios('output/resultado_lotes.json')
 
+import os
+import json
 import pandas as pd
 
+def _leer_json_lista(path):
+    """Lee un JSON que contiene una lista de objetos (tolerante a BOM)."""
+    with open(path, "r", encoding="utf-8-sig") as f:
+        data = json.load(f)
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for k in ("rows", "data", "items"):
+            if k in data and isinstance(data[k], list):
+                return data[k]
+    return []
+
+def _escribir_json_lista(path, rows):
+    """Escribe una lista de objetos a JSON (crea carpeta si no existe)."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(rows, f, ensure_ascii=False, indent=2)
+
+
 def extraer_columnas_reporte_1003():
-    # Leer el archivo (detecta automáticamente CSV o Excel)
+    # Leer desde JSON
+    src = "output/reporte_1003.json"
     try:
-        if "csv" in "output/reporte_1003".lower():
-            df = pd.read_csv("reporte_1003.csv", encoding="utf-8")
-        else:
-            df = pd.read_excel("output/reporte_1003.xlsx")
+        rows = _leer_json_lista(src)
+        df = pd.DataFrame(rows)
     except FileNotFoundError:
-        print("❌ No se encontró el archivo 'output/reporte_1003'.")
+        print("❌ No se encontró el archivo 'output/reporte_1003.json'.")
+        return
+    except Exception as e:
+        print(f"❌ Error al leer JSON: {e}")
         return
 
     # Verificar que las columnas existan
@@ -751,17 +1032,16 @@ def extraer_columnas_reporte_1003():
             return
 
     # Filtrar solo las columnas necesarias
-    df_filtrado = df[columnas_necesarias]
+    df_filtrado = df[columnas_necesarias].copy()
 
-    # Guardar el nuevo archivo sin índice
-    df_filtrado.to_csv("reporte_1003_filtrado.csv", sep=';', encoding='utf-8', index=False)
-    print("✅ Archivo 'reporte_1003_filtrado.csv' creado correctamente.")
+    # Guardar a JSON
+    dst = "output/reporte_1003_filtrado.json"
+    _escribir_json_lista(dst, df_filtrado.to_dict(orient="records"))
+    print("✅ Archivo 'output/reporte_1003_filtrado.json' creado correctamente.")
 
-# Ejecutar función
-#extraer_columnas_reporte_1003()
 
+import json
 import pandas as pd
-import re
 
 def _norm_doc(x):
     if pd.isna(x):
@@ -772,7 +1052,6 @@ def _norm_doc(x):
     return s
 
 def _fmt_grupo(v):
-    # Convierte 3.0 -> "3", 3 -> "3". Si no es numérico, deja el texto como está.
     if pd.isna(v):
         return "Activar"
     s = str(v).strip()
@@ -780,16 +1059,18 @@ def _fmt_grupo(v):
         f = float(s)
         if f.is_integer():
             return str(int(f))
-        # Si llega con decimales distintos de .0, redondea a entero
         return str(int(round(f)))
     except:
         return s or "Activar"
 
 def combinar_reportes():
     try:
-        # Leer archivos
-        df_1003 = pd.read_excel("output/reporte_1003.xlsx")
-        df_992  = pd.read_excel("output/reporte_992.xlsx")
+        # Leer archivos desde JSON
+        rows_1003 = _leer_json_lista("output/reporte_1003.json")
+        rows_992  = _leer_json_lista("output/reporte_992.json")
+
+        df_1003 = pd.DataFrame(rows_1003)
+        df_992  = pd.DataFrame(rows_992)
 
         # Validar columnas
         columnas_1003 = ["documento_numero", "inscripcion_aprobada"]
@@ -818,17 +1099,17 @@ def combinar_reportes():
             how="left"
         ).drop(columns=["doc_key"])
 
-        # Rellenar no coincidencias con "Activar"
+        # Rellenos y formato
         df_final["estado_en_ciclo"] = df_final["estado_en_ciclo"].fillna("Activar")
-        # Formatear grupo como entero sin decimales; no match -> "Activar"
         df_final["grupo"] = df_final["grupo"].apply(_fmt_grupo)
 
-        # Guardar resultado
-        df_final.to_csv("reporte_1003_combinado.csv", sep=";", encoding="utf-8", index=False)
-        print("✅ Archivo 'reporte_1003_combinado.csv' creado correctamente.")
+        # Guardar resultado en JSON
+        dst = "output/reporte_1003_combinado.json"
+        _escribir_json_lista(dst, df_final.to_dict(orient="records"))
+        print("✅ Archivo 'output/reporte_1003_combinado.json' creado correctamente.")
 
     except FileNotFoundError as e:
         print(f"❌ Archivo no encontrado: {e}")
+    except Exception as e:
+        print(f"❌ Error: {e}")
 
-# Ejecutar
-#combinar_reportes()
