@@ -3,11 +3,11 @@ import os
 import logging
 from dotenv import load_dotenv
 
-# SDK / servicios
+# Clientes/servicios
 from api_siga import ApiSigaClient
 from api_siga.services import SigaServices
 
-# Utilidades JSON-only (todas con sufijo j)
+# Utilidades (versiones JSON con sufijo j)
 from api_siga.utils import (
     MoodleManager,
     combinar_reportesj,
@@ -34,7 +34,7 @@ def _ensure_output_dir() -> None:
 
 def _session_with_retries() -> requests.Session:
     """
-    Crea una sesión con reintentos/backoff para mayor resiliencia.
+    Crea una sesión de requests con reintentos y backoff exponencial.
     """
     s = requests.Session()
     retries = Retry(
@@ -53,7 +53,7 @@ def _session_with_retries() -> requests.Session:
 
 def _get_tokens():
     """
-    Carga .env, genera access_token y TOKEN de autenticación SIGA.
+    Carga variables de entorno, genera access_token y TOKEN de autenticación SIGA.
     Retorna (services, access_token, token_autenticacion).
     """
     load_dotenv()
@@ -99,12 +99,13 @@ def _get_tokens():
 
 def run_option2() -> dict:
     """
-    Opción 2 (JSON-only):
-    - Consultar reporte 1003 y guardar como JSON
-    - Generar JSON de Moodle (desde 1003)
-    - Validaciones internas + verificación individual (JSON)
-    - Procesar archivo de lotes (JSON)
-    - Matricular en Moodle a partir de JSON
+    Opción 2 (todo en JSON):
+    - Consultar reporte 1003 -> output/reporte_1003.json
+    - Generar usuarios de Moodle (JSON) desde 1003 -> output/reporte_1003_modificado.json
+    - Comparar contra nivelación y generar faltantes -> output/usuarios_faltantes_nivelacion.json
+    - Verificación individual en Moodle -> output/verificacion_individual_moodle.json + no_matriculados.json
+    - Procesar lotes -> output/resultado_lotes.json
+    - Matricular en Moodle desde resultado_lotes.json
     """
     logger.info("Option2: START")
     _ensure_output_dir()
@@ -115,25 +116,20 @@ def run_option2() -> dict:
     resultado = services.consultar_reporte_1003(access_token, token_autenticacion)
     guardar_json(resultado, "reporte_1003")  # -> output/reporte_1003.json
 
-    logger.info("Option2: generando JSON Moodle desde 1003...")
-    # Crea output/reporte_1003_modificado.json
-    generar_csv_con_informacionj("output/reporte_1003.json")
+    logger.info("Option2: generando insumos Moodle desde 1003 (JSON)...")
+    generar_csv_con_informacionj("output/reporte_1003.json")  # crea *_modificado.json también
 
-    logger.info("Option2: validaciones internas (comparar con nivelación padre)...")
-    # Crea output/usuarios_faltantes_nivelacion.json
-    comparar_documentos_y_generar_faltantesj()
+    logger.info("Option2: validaciones internas (comparar faltantes)...")
+    comparar_documentos_y_generar_faltantesj()  # usa JSON y genera usuarios_faltantes_nivelacion.json
 
-    logger.info("Option2: verificación individual contra Moodle...")
-    # Crea verificacion_individual_moodle.json y usuarios_no_matriculados.json
-    verificar_usuarios_individualmentej()
+    logger.info("Option2: verificación individual en Moodle (JSON)...")
+    verificar_usuarios_individualmentej()  # genera verificacion_individual_moodle.json y usuarios_no_matriculados.json
 
     logger.info("Option2: procesando lotes (JSON)...")
-    # Lee usuarios_no_matriculados.json y genera resultado_lotes.json
-    procesar_archivoj("output/usuarios_no_matriculados.json", moodle_manager=None)
+    procesar_archivoj("output/usuarios_no_matriculados.json", moodle_manager=None)  # -> resultado_lotes.json
 
-    logger.info("Option2: matriculando en Moodle desde JSON...")
+    logger.info("Option2: matriculando en Moodle desde JSON de lotes...")
     moodle_manager = MoodleManager()
-    # Lee output/resultado_lotes.json
     moodle_manager.matricular_usuarios("output/resultado_lotes.json")
 
     logger.info("Option2: DONE ok")
@@ -153,9 +149,10 @@ def run_option2() -> dict:
 
 def run_option5(periodo_992: int) -> dict:
     """
-    Opción 5 (JSON-only):
-    - Consultar 1003 y 992 (guardar ambos como JSON)
-    - Post-procesos: extraer columnas (1003) + combinar reportes (JSON)
+    Opción 5 (todo en JSON):
+    - Consultar reporte 1003 -> output/reporte_1003.json
+    - Consultar reporte 992 -> output/reporte_992.json
+    - Post-procesos: extraer columnas (1003) + combinar reportes -> JSON
     """
     logger.info(f"Option5: START (periodo_992={periodo_992})")
     _ensure_output_dir()
@@ -173,10 +170,8 @@ def run_option5(periodo_992: int) -> dict:
     guardar_json(res_992, "reporte_992")  # -> output/reporte_992.json
 
     logger.info("Option5: post-procesos (extraer columnas y combinar, JSON)...")
-    # Genera output/reporte_1003_filtrado.json
-    extraer_columnas_reporte_1003j()
-    # Genera output/reporte_1003_combinado.json (o el nombre que uses en utils)
-    combinar_reportesj()
+    extraer_columnas_reporte_1003j()  # -> output/reporte_1003_filtrado.json
+    combinar_reportesj()              # -> output/reporte_1003_combinado.json
 
     logger.info("Option5: DONE ok")
     return {
