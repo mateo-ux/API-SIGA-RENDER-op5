@@ -12,8 +12,8 @@ from api_siga.utils import (
     comparar_documentos_y_generar_faltantesj,
     verificar_usuarios_individualmentej,
     procesar_archivoj,
-    extraer_columnas_reporte_1003j,
-    combinar_reportesj,
+    extraer_columnas_reporte_1003,
+    combinar_reportes,
 )
 
 import requests
@@ -159,8 +159,8 @@ def run_option5(periodo_992: int) -> dict:
     guardar_json(res_992, "reporte_992")  # -> output/reporte_992.json
 
     logger.info("Option5: post-procesos JSON…")
-    extraer_columnas_reporte_1003j()
-    combinar_reportesj()
+    extraer_columnas_reporte_1003()
+    combinar_reportes()
 
     logger.info("Option5: DONE")
     return {
