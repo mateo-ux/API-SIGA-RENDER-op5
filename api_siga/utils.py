@@ -1155,3 +1155,25 @@ try:
 except NameError:
     def extraer_columnas_reporte_1003(*args, **kwargs):
         return extraer_columnas_reporte_1003j(*args, **kwargs)
+
+
+
+# --- Alias de compatibilidad para código antiguo que esperaba Excel/CSV ---
+
+# Si guardar_excel no existe, lo mapeamos a guardar_json
+try:
+    guardar_excel
+except NameError:
+    def guardar_excel(data, nombre_reporte):
+        # Conserva la firma original pero guarda en JSON para el nuevo flujo
+        # Ej: guardar_excel(resultado, "reporte_1003") -> crea output/reporte_1003.json
+        return guardar_json(data, nombre_reporte)
+
+# (Opcional) Si en algún punto se importó json_file_to_excel, lo dejamos como no-op seguro
+try:
+    json_file_to_excel
+except NameError:
+    def json_file_to_excel(json_path, output_excel_path):
+        # No generamos Excel en Render; solo informamos.
+        print(f"ℹ️ json_file_to_excel omitido. Ahora trabajamos solo con JSON. Origen: {json_path}")
+        return None
