@@ -1113,3 +1113,45 @@ def combinar_reportes():
     except Exception as e:
         print(f"❌ Error: {e}")
 
+
+
+# ========= ALIASES DE RETRO-COMPATIBILIDAD =========
+# Permiten que código viejo que importaba nombres sin la 'j'
+# siga funcionando con las nuevas funciones basadas en JSON.
+
+try:
+    comparar_documentos_y_generar_faltantes
+except NameError:
+    def comparar_documentos_y_generar_faltantes(*args, **kwargs):
+        # Versión JSON
+        return comparar_documentos_y_generar_faltantesj(*args, **kwargs)
+
+try:
+    generar_csv_con_informacion
+except NameError:
+    def generar_csv_con_informacion(*args, **kwargs):
+        return generar_csv_con_informacionj(*args, **kwargs)
+
+try:
+    verificar_usuarios_individualmente
+except NameError:
+    def verificar_usuarios_individualmente(*args, **kwargs):
+        return verificar_usuarios_individualmentej(*args, **kwargs)
+
+try:
+    procesar_archivo
+except NameError:
+    def procesar_archivo(*args, **kwargs):
+        return procesar_archivoj(*args, **kwargs)
+
+try:
+    combinar_reportes
+except NameError:
+    def combinar_reportes(*args, **kwargs):
+        return combinar_reportesj(*args, **kwargs)
+
+try:
+    extraer_columnas_reporte_1003
+except NameError:
+    def extraer_columnas_reporte_1003(*args, **kwargs):
+        return extraer_columnas_reporte_1003j(*args, **kwargs)
