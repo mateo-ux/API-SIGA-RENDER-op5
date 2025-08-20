@@ -84,3 +84,8 @@ def run_opt5(
 
     background_tasks.add_task(task)
     return PlainTextResponse("ACCEPTED", status_code=202)
+
+# Añadido para permitir que uvicorn ejecute la app
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
