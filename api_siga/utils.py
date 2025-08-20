@@ -154,7 +154,7 @@ import json
 
 def comparar_documentos_y_generar_faltantesj(
     usuarios_path: str = "output/reporte_1003_modificado.json",
-    nivelacion_path: str = "Prueba de nivelacion Padre.json",
+    nivelacion_path: str = "input/Prueba de nivelacion Padre.json",
     salida_path: str = "output/usuarios_faltantes_nivelacion.json"
 ):
     """
@@ -279,7 +279,7 @@ def verificar_usuarios_individualmentej(
     faltantes_path: str = "output/usuarios_faltantes_nivelacion.json",
     resultados_path: str = "output/verificacion_individual_moodle.json",
     no_matriculados_path: str = "output/usuarios_no_matriculados.json",
-    maestro_path: str = "/tmp/Prueba de nivelacion Padre.json"  # Usar ruta temporal en Render
+    maestro_path: str = "input/Prueba de nivelacion Padre.json"
 ):
     """
     Verifica usuarios faltantes en Moodle uno por uno y genera:
@@ -649,7 +649,7 @@ class MoodleManager:
         self.MAX_RETRIES = 3  # Número máximo de reintentos
 
         # ARCHIVO DE EXITOSOS -> JSON (antes: CSV)
-        self.ARCHIVO_EXITOSOS = 'Prueba de nivelacion Padre.json'
+        self.ARCHIVO_EXITOSOS = 'input/Prueba de nivelacion Padre.json'
         
         if not all([self.MOODLE_URL, self.MOODLE_TOKEN, self.APPS_SCRIPT_URL, self.SHEET_ID]):
             raise ValueError("Faltan configuraciones en el archivo .env")
