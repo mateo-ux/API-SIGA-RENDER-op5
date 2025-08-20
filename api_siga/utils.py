@@ -279,7 +279,7 @@ def verificar_usuarios_individualmentej(
     faltantes_path: str = "output/usuarios_faltantes_nivelacion.json",
     resultados_path: str = "output/verificacion_individual_moodle.json",
     no_matriculados_path: str = "output/usuarios_no_matriculados.json",
-    maestro_path: str = "Prueba de nivelacion Padre.json"
+    maestro_path: str = "/tmp/Prueba de nivelacion Padre.json"  # Usar ruta temporal en Render
 ):
     """
     Verifica usuarios faltantes en Moodle uno por uno y genera:
