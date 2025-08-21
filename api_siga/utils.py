@@ -330,19 +330,59 @@ def verificar_usuarios_individualmentej(
 
         session = requests.Session()
 
-        def usuario_en_moodle(documento: str) -> bool:
+        def usuario_matriculado_en_curso(documento: str) -> bool:
+            """
+            Verifica si el usuario está matriculado en el curso ID 5 usando core_enrol_get_users_courses
+            Versión optimizada y rápida
+            """
             params = {
                 'wstoken': MOODLE_TOKEN,
-                'wsfunction': 'core_user_get_users_by_field',
-                'field': 'username',
-                'values[0]': documento,
+                'wsfunction': 'core_enrol_get_users_courses',
+                'userid': 0,  # Temporal, necesitamos obtener el userid primero
                 'moodlewsrestformat': 'json'
             }
+            
             try:
-                r = session.get(MOODLE_URL, params=params, timeout=15)
-                users = r.json()
-                return isinstance(users, list) and len(users) > 0
-            except Exception:
+                # Primero obtener el userid del usuario por su username
+                params_user = {
+                    'wstoken': MOODLE_TOKEN,
+                    'wsfunction': 'core_user_get_users_by_field',
+                    'field': 'username',
+                    'values[0]': documento,
+                    'moodlewsrestformat': 'json'
+                }
+                
+                user_response = session.get(MOODLE_URL, params=params_user, timeout=10)
+                users = user_response.json()
+                
+                if not isinstance(users, list) or len(users) == 0:
+                    return False  # Usuario no existe en Moodle
+                
+                user_id = users[0].get('id')
+                if not user_id:
+                    return False
+                
+                # Ahora verificar en qué cursos está matriculado este usuario
+                params_courses = {
+                    'wstoken': MOODLE_TOKEN,
+                    'wsfunction': 'core_enrol_get_users_courses',
+                    'userid': user_id,
+                    'moodlewsrestformat': 'json'
+                }
+                
+                courses_response = session.get(MOODLE_URL, params=params_courses, timeout=10)
+                user_courses = courses_response.json()
+                
+                if isinstance(user_courses, list):
+                    # Buscar si el curso ID 5 está en la lista de cursos del usuario
+                    for course in user_courses:
+                        if str(course.get('id')) == str(COURSE_ID):
+                            return True
+                
+                return False
+                
+            except Exception as e:
+                print(f"Error verificando {documento}: {str(e)}")
                 return False
 
         # 3) Verificar cada usuario
@@ -352,15 +392,16 @@ def verificar_usuarios_individualmentej(
         resultados = []
         for i, row in df_faltantes.iterrows():
             documento = str(row['idnumber'])
-            en_moodle = usuario_en_moodle(documento)
+            matriculado = usuario_matriculado_en_curso(documento)
             resultados.append({
                 "idnumber": documento,
-                "en_moodle": bool(en_moodle),
+                "en_moodle": bool(matriculado),
                 "fecha_verificacion": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             })
 
             if (i + 1) % 10 == 0 or (i + 1) == total_usuarios:
-                print(f"Progreso: {i+1}/{total_usuarios} | Último documento: {documento}")
+                status = "✅" if matriculado else "❌"
+                print(f"Progreso: {i+1}/{total_usuarios} | {status} {documento}")
 
         df_resultados = pd.DataFrame(resultados)
 
@@ -694,41 +735,49 @@ class MoodleManager:
                     print(f"\n[{i}/{len(usuarios)}] Procesando usuario: {username}")
                     
                     # Verificar si el usuario ya existe
-                    if self.usuario_existe(username):
-                        print("⏩ Usuario ya existe, omitiendo...")
-                        self.registrar_resultado(row, "fallido", "Usuario ya existente")
-                        continue
-                        
-                    # Crear nuevo usuario
-                    try:
-                        user_id = self.crear_usuario(row)
+                    user_id = None
+                    usuario_existente = self.usuario_existe(username)
+                    
+                    if usuario_existente:
+                        print("✅ Usuario ya existe, obteniendo ID...")
+                        # Obtener el ID del usuario existente
+                        user_id = self.obtener_id_usuario(username)
                         if not user_id:
-                            continue  # El error ya se registró en crear_usuario
-                            
-                        # Matricular en curso principal (ID=5)
-                        if not self.matricular_en_curso(user_id, 5, 5):
-                            self.registrar_resultado(row, "fallido", "Error en matriculación")
+                            self.registrar_resultado(row, "fallido", "Usuario existe pero no se pudo obtener ID")
                             continue
-                            
-                        # Asignar a grupo/subgrupo si está especificado
-                        grupo = row.get('group1', '').strip()
-                        if grupo and not self.asignar_a_grupo(user_id, 5, grupo):
-                            self.registrar_resultado(row, "fallido", "Error al asignar grupo")
+                    else:
+                        # Crear nuevo usuario
+                        try:
+                            user_id = self.crear_usuario(row)
+                            if not user_id:
+                                continue  # El error ya se registró en crear_usuario
+                        except Exception as e:
+                            error_msg = str(e)
+                            print(f"⚠️ Error al crear usuario: {error_msg}")
+                            self.registrar_resultado(row, "fallido", error_msg)
                             continue
-                        
-                        # Registrar éxito en Google Sheets
-                        if not self.registrar_resultado(row, "exitoso", "Matriculación exitosa", grupo):
-                            print("⚠️ No se pudo registrar el éxito en Google Sheets, pero el usuario fue creado")
-                        
-                        # Registrar username en archivo JSON de exitosos
-                        self.registrar_exitoso_csv(username)  # mantiene el nombre, ahora escribe JSON
-                        
-                    except Exception as e:
-                        error_msg = str(e)
-                        print(f"⚠️ Error al crear usuario: {error_msg}")
-                        self.registrar_resultado(row, "fallido", error_msg)
+                    
+                    # Ahora tenemos user_id (ya sea de usuario nuevo o existente)
+                    # Proceder con matriculación y asignación de grupo
+                    
+                    # Matricular en curso principal (ID=5)
+                    if not self.matricular_en_curso(user_id, 5, 5):
+                        self.registrar_resultado(row, "fallido", "Error en matriculación")
                         continue
-                
+                        
+                    # Asignar a grupo/subgrupo si está especificado
+                    grupo = row.get('group1', '').strip()
+                    if grupo and not self.asignar_a_grupo(user_id, 5, grupo):
+                        self.registrar_resultado(row, "fallido", "Error al asignar grupo")
+                        continue
+                    
+                    # Registrar éxito en Google Sheets
+                    if not self.registrar_resultado(row, "exitoso", "Matriculación exitosa", grupo):
+                        print("⚠️ No se pudo registrar el éxito en Google Sheets, pero el usuario fue procesado")
+                    
+                    # Registrar username en archivo JSON de exitosos
+                    self.registrar_exitoso_csv(username)
+                    
                 except Exception as e:
                     error_msg = f"Error inesperado: {str(e)}"
                     print(f"⚠️ {error_msg}")
@@ -740,6 +789,27 @@ class MoodleManager:
             raise
         finally:
             print("\n✅ Proceso completado. Revisa los registros en Google Sheets y en el archivo JSON de exitosos")
+
+    def obtener_id_usuario(self, username):
+        """
+        Obtiene el ID de un usuario existente por su username
+        """
+        params = {
+            'wstoken': self.MOODLE_TOKEN,
+            'wsfunction': 'core_user_get_users_by_field',
+            'field': 'username',
+            'values[0]': username,
+            'moodlewsrestformat': 'json'
+        }
+        response = self.session.get(
+            urljoin(self.MOODLE_URL, 'webservice/rest/server.php'),
+            params=params,
+            headers=self.headers
+        )
+        users = response.json()
+        if isinstance(users, list) and len(users) > 0 and 'id' in users[0]:
+            return users[0]['id']
+        return None
 
     def registrar_exitoso_csv(self, username):
         """
