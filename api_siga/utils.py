@@ -163,7 +163,7 @@ def migrar_datos_existentes():
         print(f"⚠️ Error en migración: {e}")
 
 # Ejecutar migración al inicio
-migrar_datos_existentes()
+#migrar_datos_existentes()
 
 # ==================== RESTA DE TUS FUNCIONES ORIGINALES ====================
 # [MANTENER TODAS TUS FUNCIONES ORIGINALES A PARTIR DE AQUÍ]
