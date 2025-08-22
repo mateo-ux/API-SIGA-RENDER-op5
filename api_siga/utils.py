@@ -1,9 +1,172 @@
+# api_siga/utils.py - VERSIÓN CORREGIDA CON BASE DE DATOS INLINE
 import os
+import sys
+from pathlib import Path
 import requests
 import pandas as pd
 from dotenv import load_dotenv
 import json
 import time
+import csv
+from datetime import datetime
+from urllib.parse import urljoin
+import sqlite3
+
+# ==================== BASE DE DATOS INLINE ====================
+# 🔥 SOLUCIÓN: Crear la base de datos directamente aquí
+
+class NivelacionDatabase:
+    def __init__(self):
+        # La base de datos está en la misma carpeta (api_siga)
+        self.db_path = Path(__file__).parent / "nivelacion_data.db"
+        self._init_database()
+    
+    def _init_database(self):
+        """Inicializa la base de datos con todas las tablas necesarias"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Tabla principal de usuarios
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS usuarios_nivelacion (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                estado TEXT DEFAULT 'pendiente',
+                fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            
+            # Tabla de historial para tracking
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS historial_nivelacion (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                accion TEXT NOT NULL,
+                detalles TEXT,
+                fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            ''')
+            
+            conn.commit()
+            conn.close()
+            print("✅ Base de datos inicializada correctamente")
+        except Exception as e:
+            print(f"❌ Error inicializando base de datos: {e}")
+    
+    def usuario_existe(self, username):
+        """Verifica si un usuario ya existe en la base de datos"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                'SELECT COUNT(*) FROM usuarios_nivelacion WHERE username = ?',
+                (username,)
+            )
+            
+            resultado = cursor.fetchone()[0] > 0
+            conn.close()
+            return resultado
+        except Exception as e:
+            print(f"❌ Error verificando usuario: {e}")
+            return False
+    
+    def agregar_usuario(self, username, estado="pendiente"):
+        """Agrega un nuevo usuario a la base de datos"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute(
+                'INSERT OR IGNORE INTO usuarios_nivelacion (username, estado) VALUES (?, ?)',
+                (username, estado)
+            )
+            
+            # Registrar en historial
+            cursor.execute(
+                'INSERT INTO historial_nivelacion (username, accion) VALUES (?, ?)',
+                (username, f"usuario_agregado_{estado}")
+            )
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"❌ Error agregando usuario {username}: {e}")
+            return False
+    
+    def actualizar_estado_usuario(self, username, nuevo_estado, detalles=None):
+        """Actualiza el estado de un usuario y registra en historial"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Actualizar estado
+            cursor.execute(
+                'UPDATE usuarios_nivelacion SET estado = ?, fecha_actualizacion = CURRENT_TIMESTAMP WHERE username = ?',
+                (nuevo_estado, username)
+            )
+            
+            # Registrar en historial
+            cursor.execute(
+                'INSERT INTO historial_nivelacion (username, accion, detalles) VALUES (?, ?, ?)',
+                (username, f"estado_actualizado_{nuevo_estado}", json.dumps(detalles) if detalles else None)
+            )
+            
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"❌ Error actualizando usuario {username}: {e}")
+            return False
+
+# Instancia global para usar en toda la aplicación
+nivelacion_db = NivelacionDatabase()
+
+# ==================== FUNCIÓN DE MIGRACIÓN ====================
+def migrar_datos_existentes():
+    """Migra datos desde JSON antiguo a base de datos"""
+    try:
+        json_path = os.path.join("input", "Prueba de nivelacion Padre.json")
+        
+        if os.path.exists(json_path):
+            print("🔄 Migrando datos existentes desde JSON a base de datos...")
+            
+            with open(json_path, "r", encoding="utf-8") as f:
+                datos_existentes = json.load(f)
+            
+            # Manejar diferentes formatos
+            if isinstance(datos_existentes, list):
+                usuarios = datos_existentes
+            elif isinstance(datos_existentes, dict):
+                usuarios = datos_existentes.get("rows") or datos_existentes.get("data") or []
+            else:
+                usuarios = []
+            
+            # Migrar cada usuario
+            migrados = 0
+            for usuario in usuarios:
+                if isinstance(usuario, dict):
+                    username = usuario.get("username") or usuario.get("idnumber") or ""
+                    if username:
+                        nivelacion_db.agregar_usuario(str(username).strip(), "migrado")
+                        migrados += 1
+            
+            print(f"✅ {migrados} usuarios migrados a la base de datos")
+            
+        else:
+            print("ℹ️ No hay archivo JSON existente para migrar")
+            
+    except Exception as e:
+        print(f"⚠️ Error en migración: {e}")
+
+# Ejecutar migración al inicio
+#migrar_datos_existentes()
+
+# ==================== RESTA DE TUS FUNCIONES ORIGINALES ====================
+# [MANTENER TODAS TUS FUNCIONES ORIGINALES A PARTIR DE AQUÍ]
 
 # Cargar las variables del archivo .env
 load_dotenv()
@@ -151,19 +314,12 @@ def generar_csv_con_informacionj(reporte_excel):
 
 import os
 import json
-
 def comparar_documentos_y_generar_faltantesj(
     usuarios_path: str = "output/reporte_1003_modificado.json",
-    nivelacion_path: str = "input/Prueba de nivelacion Padre.json",
     salida_path: str = "output/usuarios_faltantes_nivelacion.json"
 ):
     """
-    Compara usuarios (1003_modificado) vs el maestro de nivelación y genera un JSON con los faltantes.
-    Entradas:
-      - usuarios_path: JSON con campos al menos 'idnumber'
-      - nivelacion_path: JSON maestro con campo 'username'
-    Salida:
-      - salida_path: JSON con las filas de usuarios que faltan en nivelación
+    NUEVA VERSIÓN - Usa base de datos en lugar de JSON estático
     """
     try:
         # ---- Cargar usuarios (1003_modificado) ----
@@ -180,90 +336,32 @@ def comparar_documentos_y_generar_faltantesj(
         else:
             usuarios_rows = usuarios_data
 
-        if not isinstance(usuarios_rows, list) or (usuarios_rows and not isinstance(usuarios_rows[0], dict)):
-            print("❌ Formato inválido en usuarios (se esperaba list[dict]).")
-            return None
-
-        if not usuarios_rows:
+        if not isinstance(usuarios_rows, list) or not usuarios_rows:
             print("⚠️ El archivo de usuarios está vacío.")
-            # Creamos salida vacía para mantener flujo
-            os.makedirs(os.path.dirname(salida_path), exist_ok=True)
             with open(salida_path, "w", encoding="utf-8") as f:
                 json.dump([], f, ensure_ascii=False, indent=2)
             return salida_path
 
-        # Validar columna requerida
         if "idnumber" not in usuarios_rows[0]:
             print("❌ El JSON de usuarios no contiene la clave 'idnumber'.")
             return None
 
-        # ---- Cargar nivelación (maestro) ----
-        if not os.path.exists(nivelacion_path):
-            print(f"❌ Error: No existe {nivelacion_path}")
-            return None
-
-        with open(nivelacion_path, "r", encoding="utf-8") as f:
-            nivelacion_data = json.load(f)
-
-        if isinstance(nivelacion_data, dict):
-            nivelacion_rows = nivelacion_data.get("rows") or nivelacion_data.get("data") or nivelacion_data.get("items") or []
-        else:
-            nivelacion_rows = nivelacion_data
-
-        if not isinstance(nivelacion_rows, list) or (nivelacion_rows and not isinstance(nivelacion_rows[0], dict)):
-            print("❌ Formato inválido en nivelación (se esperaba list[dict]).")
-            return None
-
-        if not nivelacion_rows:
-            print("⚠️ El maestro de nivelación está vacío; todos los usuarios serán faltantes.")
-
-        # Validar columna requerida
-        if nivelacion_rows and "username" not in nivelacion_rows[0]:
-            print("❌ El JSON de nivelación no contiene la clave 'username'.")
-            return None
-
-        # ---- Calcular faltantes ----
-        documentos_usuarios = {str(u.get("idnumber", "")).strip() for u in usuarios_rows if u.get("idnumber") not in (None, "")}
-        documentos_nivelacion = {str(n.get("username", "")).strip() for n in nivelacion_rows if n.get("username") not in (None, "")}
-
-        documentos_faltantes = documentos_usuarios - documentos_nivelacion
-
-        if not documentos_faltantes:
-            print("✅ Todos los usuarios están en el maestro de nivelación.")
-            # Generamos igualmente un JSON vacío
-            os.makedirs(os.path.dirname(salida_path), exist_ok=True)
-            with open(salida_path, "w", encoding="utf-8") as f:
-                json.dump([], f, ensure_ascii=False, indent=2)
-            return salida_path
-
-        faltantes_rows = [u for u in usuarios_rows if str(u.get("idnumber", "")).strip() in documentos_faltantes]
-
-        if not faltantes_rows:
-            print("⚠️ No se encontraron registros faltantes (posible inconsistencia de datos).")
-            os.makedirs(os.path.dirname(salida_path), exist_ok=True)
-            with open(salida_path, "w", encoding="utf-8") as f:
-                json.dump([], f, ensure_ascii=False, indent=2)
-            return salida_path
+        # ---- Encontrar usuarios faltantes (COMPARACIÓN CON BASE DE DATOS) ----
+        usuarios_faltantes = []
+        for usuario in usuarios_rows:
+            username = str(usuario.get("idnumber", "")).strip()
+            if username and not nivelacion_db.usuario_existe(username):
+                usuarios_faltantes.append(usuario)
 
         # ---- Guardar salida JSON ----
         os.makedirs(os.path.dirname(salida_path), exist_ok=True)
-        # Sobrescribir si ya existe
-        try:
-            if os.path.exists(salida_path):
-                os.remove(salida_path)
-        except Exception:
-            pass
-
         with open(salida_path, "w", encoding="utf-8") as f:
-            json.dump(faltantes_rows, f, ensure_ascii=False, indent=2)
+            json.dump(usuarios_faltantes, f, ensure_ascii=False, indent=2)
 
-        print(f"✅ Archivo generado con usuarios faltantes: {salida_path}")
-        print(f"📝 Total de usuarios faltantes: {len(faltantes_rows)}")
+        print(f"✅ {len(usuarios_faltantes)} usuarios faltantes encontrados")
+        print(f"📁 Archivo generado: {salida_path}")
         return salida_path
 
-    except FileNotFoundError as e:
-        print(f"❌ Error: Archivo no encontrado - {e}")
-        return None
     except Exception as e:
         print(f"❌ Error inesperado: {e}")
         return None
@@ -275,19 +373,24 @@ import pandas as pd
 from datetime import datetime
 from dotenv import load_dotenv
 
+import os
+import json
+import pandas as pd
+from datetime import datetime
+from dotenv import load_dotenv
+import requests
+
+
 def verificar_usuarios_individualmentej(
     faltantes_path: str = "output/usuarios_faltantes_nivelacion.json",
     resultados_path: str = "output/verificacion_individual_moodle.json",
-    no_matriculados_path: str = "output/usuarios_no_matriculados.json",
-    maestro_path: str = "input/Prueba de nivelacion Padre.json"
+    no_matriculados_path: str = "output/usuarios_no_matriculados.json"
 ):
     """
     Verifica usuarios faltantes en Moodle uno por uno y genera:
       - output/verificacion_individual_moodle.json (reporte completo)
       - output/usuarios_no_matriculados.json (subset)
-      - Actualiza Prueba de nivelacion Padre.json agregando 'username' de los matriculados.
-    Entradas:
-      - faltantes_path: JSON con al menos la clave 'idnumber' por registro.
+      - Actualiza la BASE DE DATOS con los usuarios matriculados
     """
     try:
         # 1) Cargar usuarios faltantes (JSON)
@@ -310,7 +413,7 @@ def verificar_usuarios_individualmentej(
         df_faltantes = pd.DataFrame(faltantes_rows)
         if df_faltantes.empty or "idnumber" not in df_faltantes.columns:
             print("⚠️ 'faltantes' vacío o sin columna 'idnumber'.")
-            # Aun así dejar archivos consistentes
+            # Crear archivos vacíos para mantener flujo
             os.makedirs(os.path.dirname(resultados_path), exist_ok=True)
             with open(resultados_path, "w", encoding="utf-8") as f:
                 json.dump([], f, ensure_ascii=False, indent=2)
@@ -320,9 +423,9 @@ def verificar_usuarios_individualmentej(
 
         # 2) Configuración Moodle
         load_dotenv()
-        MOODLE_URL = os.getenv("MOODLE_URL")  # En tu .env ya apunta a .../webservice/rest/server.php
+        MOODLE_URL = os.getenv("MOODLE_URL")
         MOODLE_TOKEN = os.getenv("MOODLE_TOKEN")
-        COURSE_ID = os.getenv("PRUEBA_INICIO_COURSE_ID", "5")  # por defecto 5
+        COURSE_ID = os.getenv("PRUEBA_INICIO_COURSE_ID", "5")
 
         if not MOODLE_URL or not MOODLE_TOKEN:
             print("❌ Faltan MOODLE_URL/MOODLE_TOKEN en el .env")
@@ -332,18 +435,17 @@ def verificar_usuarios_individualmentej(
 
         def usuario_matriculado_en_curso(documento: str) -> bool:
             """
-            Verifica si el usuario está matriculado en el curso ID 5 usando core_enrol_get_users_courses
-            Versión optimizada y rápida
+            Verifica si el usuario está matriculado en el curso ID 5
             """
             params = {
                 'wstoken': MOODLE_TOKEN,
                 'wsfunction': 'core_enrol_get_users_courses',
-                'userid': 0,  # Temporal, necesitamos obtener el userid primero
+                'userid': 0,
                 'moodlewsrestformat': 'json'
             }
             
             try:
-                # Primero obtener el userid del usuario por su username
+                # Primero obtener el userid del usuario
                 params_user = {
                     'wstoken': MOODLE_TOKEN,
                     'wsfunction': 'core_user_get_users_by_field',
@@ -356,13 +458,13 @@ def verificar_usuarios_individualmentej(
                 users = user_response.json()
                 
                 if not isinstance(users, list) or len(users) == 0:
-                    return False  # Usuario no existe en Moodle
+                    return False
                 
                 user_id = users[0].get('id')
                 if not user_id:
                     return False
                 
-                # Ahora verificar en qué cursos está matriculado este usuario
+                # Verificar en qué cursos está matriculado
                 params_courses = {
                     'wstoken': MOODLE_TOKEN,
                     'wsfunction': 'core_enrol_get_users_courses',
@@ -374,7 +476,6 @@ def verificar_usuarios_individualmentej(
                 user_courses = courses_response.json()
                 
                 if isinstance(user_courses, list):
-                    # Buscar si el curso ID 5 está en la lista de cursos del usuario
                     for course in user_courses:
                         if str(course.get('id')) == str(COURSE_ID):
                             return True
@@ -406,16 +507,9 @@ def verificar_usuarios_individualmentej(
         df_resultados = pd.DataFrame(resultados)
 
         # 4) Separar matriculados / no matriculados
-        df_matriculados = df_faltantes[
-            df_faltantes['idnumber'].isin(
-                df_resultados[df_resultados['en_moodle'] == True]['idnumber']
-            )
-        ]
-        df_no_matriculados = df_faltantes[
-            df_faltantes['idnumber'].isin(
-                df_resultados[df_resultados['en_moodle'] == False]['idnumber']
-            )
-        ]
+        matriculados_mask = df_resultados['en_moodle'] == True
+        df_matriculados = df_faltantes[matriculados_mask].copy() if 'df_faltantes' in locals() else pd.DataFrame()
+        df_no_matriculados = df_faltantes[~matriculados_mask].copy() if 'df_faltantes' in locals() else pd.DataFrame()
 
         # 5) Guardar salidas como JSON
         os.makedirs(os.path.dirname(resultados_path), exist_ok=True)
@@ -428,42 +522,19 @@ def verificar_usuarios_individualmentej(
             json.dump(df_no_matriculados.to_dict(orient="records"), f, ensure_ascii=False, indent=2)
         print(f"✅ {len(df_no_matriculados)} usuarios NO matriculados guardados en {no_matriculados_path}")
 
-        # 6) Actualizar maestro de nivelación (JSON) con los matriculados
+        # 6) ✅ ACTUALIZAR BASE DE DATOS (en lugar del JSON maestro)
         if not df_matriculados.empty:
-            # Cargar maestro actual
-            if os.path.exists(maestro_path):
-                with open(maestro_path, "r", encoding="utf-8") as f:
-                    maestro_data = json.load(f)
-                if isinstance(maestro_data, dict):
-                    maestro_rows = maestro_data.get("rows") or maestro_data.get("data") or maestro_data.get("items") or []
-                else:
-                    maestro_rows = maestro_data
-            else:
-                maestro_rows = []
+            for _, row in df_matriculados.iterrows():
+                username = str(row['idnumber']).strip()
+                if username:
+                    # Agregar a base de datos como "verificado"
+                    nivelacion_db.agregar_usuario(username, "verificado")
+                    print(f"✅ Usuario {username} verificado y registrado en BD")
 
-            # Normalizar maestro a lista de dicts con 'username'
-            if not isinstance(maestro_rows, list):
-                maestro_rows = []
-            # Conjunto existente
-            existentes = {str(r.get("username", "")).strip() for r in maestro_rows if isinstance(r, dict)}
-
-            nuevos = []
-            for doc in df_matriculados['idnumber'].astype(str):
-                u = doc.strip()
-                if u and u not in existentes:
-                    nuevos.append({"username": u})
-
-            if nuevos:
-                maestro_rows.extend(nuevos)
-                # Guardar maestro actualizado
-                with open(maestro_path, "w", encoding="utf-8") as f:
-                    json.dump(maestro_rows, f, ensure_ascii=False, indent=2)
-                print(f"📁 {len(nuevos)} usuarios agregados a {maestro_path}")
-            else:
-                print("ℹ️ No había usuarios nuevos para agregar al maestro.")
+        print("✅ Verificación completada y base de datos actualizada")
 
     except Exception as e:
-        print(f"\n❌ Error: {str(e)}")
+        print(f"❌ Error inesperado en verificación: {str(e)}")
 import os
 import json
 import pandas as pd
@@ -684,16 +755,32 @@ class MoodleManager:
         self.session = requests.Session()
         self.headers = {'Content-Type': 'application/x-www-form-urlencoded'}
         
-        # Configuración de Google Sheets via Apps Script
+        # Configuración de Google Sheets
         self.APPS_SCRIPT_URL = os.getenv('APPS_SCRIPT_WEBAPP_URL')
         self.SHEET_ID = os.getenv('GOOGLE_SHEET_ID')
-        self.MAX_RETRIES = 3  # Número máximo de reintentos
+        self.MAX_RETRIES = 3
 
-        # ARCHIVO DE EXITOSOS -> JSON (antes: CSV)
-        self.ARCHIVO_EXITOSOS = 'input/Prueba de nivelacion Padre.json'
-        
-        if not all([self.MOODLE_URL, self.MOODLE_TOKEN, self.APPS_SCRIPT_URL, self.SHEET_ID]):
-            raise ValueError("Faltan configuraciones en el archivo .env")
+    def registrar_exitoso_db(self, username):
+        """
+        REEMPLAZA registrar_exitoso_csv - Ahora usa base de datos
+        """
+        try:
+            if not username:
+                return False
+            
+            # Registrar en base de datos (usa la instancia global)
+            success = nivelacion_db.agregar_usuario(username, "exitoso")
+            
+            if success:
+                print(f"✅ Usuario {username} registrado en base de datos como exitoso")
+            else:
+                print(f"⚠️ Usuario {username} ya existía en base de datos")
+            
+            return success
+            
+        except Exception as e:
+            print(f"❌ Error registrando usuario en BD: {str(e)}")
+            return False
 
     def _leer_json_lista(self, path):
         """Lee un archivo JSON que contiene una lista (tolerante a UTF-8 con BOM)."""
@@ -718,17 +805,12 @@ class MoodleManager:
 
     def matricular_usuarios(self, json_file_path):
         """
-        Lee usuarios desde un JSON (list[dict]) y ejecuta el flujo de creación/matriculación.
-        (Antes recibía CSV; ahora JSON).
+        Versión actualizada sin ARCHIVO_EXITOSOS
         """
         try:
             usuarios = self._leer_json_lista(json_file_path)
             print(f"\nTotal de usuarios a procesar: {len(usuarios)}")
             
-            # Inicializar archivo de exitosos si no existe (formato JSON: list de objetos {'username': ...})
-            if not os.path.exists(self.ARCHIVO_EXITOSOS):
-                self._escribir_json_lista(self.ARCHIVO_EXITOSOS, [])
-
             for i, row in enumerate(usuarios, 1):
                 try:
                     username = row.get('username', '').strip()
@@ -740,7 +822,6 @@ class MoodleManager:
                     
                     if usuario_existente:
                         print("✅ Usuario ya existe, obteniendo ID...")
-                        # Obtener el ID del usuario existente
                         user_id = self.obtener_id_usuario(username)
                         if not user_id:
                             self.registrar_resultado(row, "fallido", "Usuario existe pero no se pudo obtener ID")
@@ -750,15 +831,12 @@ class MoodleManager:
                         try:
                             user_id = self.crear_usuario(row)
                             if not user_id:
-                                continue  # El error ya se registró en crear_usuario
+                                continue
                         except Exception as e:
                             error_msg = str(e)
                             print(f"⚠️ Error al crear usuario: {error_msg}")
                             self.registrar_resultado(row, "fallido", error_msg)
                             continue
-                    
-                    # Ahora tenemos user_id (ya sea de usuario nuevo o existente)
-                    # Proceder con matriculación y asignación de grupo
                     
                     # Matricular en curso principal (ID=5)
                     if not self.matricular_en_curso(user_id, 5, 5):
@@ -771,12 +849,13 @@ class MoodleManager:
                         self.registrar_resultado(row, "fallido", "Error al asignar grupo")
                         continue
                     
+                    # ✅ REGISTRAR ÉXITO EN BASE DE DATOS (no en JSON)
+                    if not self.registrar_exitoso_db(username):
+                        print("⚠️ No se pudo registrar en BD, pero el usuario fue procesado")
+                    
                     # Registrar éxito en Google Sheets
                     if not self.registrar_resultado(row, "exitoso", "Matriculación exitosa", grupo):
-                        print("⚠️ No se pudo registrar el éxito en Google Sheets, pero el usuario fue procesado")
-                    
-                    # Registrar username en archivo JSON de exitosos
-                    self.registrar_exitoso_csv(username)
+                        print("⚠️ No se pudo registrar en Google Sheets")
                     
                 except Exception as e:
                     error_msg = f"Error inesperado: {str(e)}"
@@ -788,7 +867,7 @@ class MoodleManager:
             print(f"🚨 Error crítico: {str(e)}")
             raise
         finally:
-            print("\n✅ Proceso completado. Revisa los registros en Google Sheets y en el archivo JSON de exitosos")
+            print("\n✅ Proceso completado. Revisa los registros en Google Sheets")
 
     def obtener_id_usuario(self, username):
         """
