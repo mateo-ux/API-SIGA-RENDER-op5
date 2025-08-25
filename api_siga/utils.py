@@ -11,112 +11,132 @@ import csv
 from datetime import datetime
 from urllib.parse import urljoin
 import sqlite3
-
-# ==================== BASE DE DATOS INLINE ====================
-# 🔥 SOLUCIÓN: Crear la base de datos directamente aquí
-
+# ==================== BASE DE DATOS POSTGRES ====================
+import os
+import json
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from urllib.parse import urlparse
+load_dotenv()
 class NivelacionDatabase:
+    """
+    Implementación para PostgreSQL (Render).
+    Mantiene la misma API pública:
+      - usuario_existe(username) -> bool
+      - agregar_usuario(username, estado="pendiente") -> bool
+      - actualizar_estado_usuario(username, nuevo_estado, detalles=None) -> bool
+    """
+
     def __init__(self):
-        # La base de datos está en la misma carpeta (api_siga)
-        self.db_path = Path(__file__).parent / "nivelacion_data.db"
+        self.database_url = os.getenv("DATABASE_URL")
+        if not self.database_url:
+            raise RuntimeError(
+                "Falta DATABASE_URL en el .env. Debe apuntar a tu Postgres de Render."
+            )
         self._init_database()
-    
+
+    def _get_conn(self):
+        # sslmode ya puede venir en la URL; Render normalmente exige sslmode=require
+        return psycopg2.connect(self.database_url)
+
     def _init_database(self):
-        """Inicializa la base de datos con todas las tablas necesarias"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # Tabla principal de usuarios
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS usuarios_nivelacion (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                estado TEXT DEFAULT 'pendiente',
-                fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                fecha_actualizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            ''')
-            
-            # Tabla de historial para tracking
-            cursor.execute('''
-            CREATE TABLE IF NOT EXISTS historial_nivelacion (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL,
-                accion TEXT NOT NULL,
-                detalles TEXT,
-                fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-            ''')
-            
+        """Crea tablas si no existen (idempotente)."""
+        ddl_usuarios = """
+        CREATE TABLE IF NOT EXISTS usuarios_nivelacion (
+            id SERIAL PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            estado TEXT DEFAULT 'pendiente',
+            fecha_creacion TIMESTAMPTZ DEFAULT NOW(),
+            fecha_actualizacion TIMESTAMPTZ DEFAULT NOW()
+        );
+        """
+        ddl_historial = """
+        CREATE TABLE IF NOT EXISTS historial_nivelacion (
+            id SERIAL PRIMARY KEY,
+            username TEXT NOT NULL,
+            accion TEXT NOT NULL,
+            detalles JSONB,
+            fecha TIMESTAMPTZ DEFAULT NOW()
+        );
+        """
+        # Índice útil para búsquedas por username en historial
+        ddl_idx_hist_user = """
+        CREATE INDEX IF NOT EXISTS idx_historial_username ON historial_nivelacion (username);
+        """
+
+        with self._get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(ddl_usuarios)
+                cur.execute(ddl_historial)
+                cur.execute(ddl_idx_hist_user)
             conn.commit()
-            conn.close()
-            print("✅ Base de datos inicializada correctamente")
-        except Exception as e:
-            print(f"❌ Error inicializando base de datos: {e}")
-    
-    def usuario_existe(self, username):
-        """Verifica si un usuario ya existe en la base de datos"""
+        print("✅ Tablas verificadas/creadas en PostgreSQL")
+
+    # ----------------- MÉTODOS PÚBLICOS -----------------
+
+    def usuario_existe(self, username: str) -> bool:
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute(
-                'SELECT COUNT(*) FROM usuarios_nivelacion WHERE username = ?',
-                (username,)
-            )
-            
-            resultado = cursor.fetchone()[0] > 0
-            conn.close()
-            return resultado
+            with self._get_conn() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM usuarios_nivelacion WHERE username = %s LIMIT 1;",
+                    (username,)
+                )
+                return cur.fetchone() is not None
         except Exception as e:
             print(f"❌ Error verificando usuario: {e}")
             return False
-    
-    def agregar_usuario(self, username, estado="pendiente"):
-        """Agrega un nuevo usuario a la base de datos"""
+
+    def agregar_usuario(self, username: str, estado: str = "pendiente") -> bool:
+        """
+        Inserta o ignora si ya existe (UPSERT).
+        """
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute(
-                'INSERT OR IGNORE INTO usuarios_nivelacion (username, estado) VALUES (?, ?)',
-                (username, estado)
-            )
-            
-            # Registrar en historial
-            cursor.execute(
-                'INSERT INTO historial_nivelacion (username, accion) VALUES (?, ?)',
-                (username, f"usuario_agregado_{estado}")
-            )
-            
-            conn.commit()
-            conn.close()
+            with self._get_conn() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO usuarios_nivelacion (username, estado)
+                    VALUES (%s, %s)
+                    ON CONFLICT (username) DO NOTHING;
+                    """,
+                    (username, estado)
+                )
+                # registro en historial
+                cur.execute(
+                    """
+                    INSERT INTO historial_nivelacion (username, accion, detalles)
+                    VALUES (%s, %s, %s);
+                    """,
+                    (username, f"usuario_agregado_{estado}", None)
+                )
+                conn.commit()
             return True
         except Exception as e:
             print(f"❌ Error agregando usuario {username}: {e}")
             return False
-    
-    def actualizar_estado_usuario(self, username, nuevo_estado, detalles=None):
-        """Actualiza el estado de un usuario y registra en historial"""
+
+    def actualizar_estado_usuario(self, username: str, nuevo_estado: str, detalles=None) -> bool:
+        """
+        Actualiza el estado y agrega entrada al historial.
+        """
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # Actualizar estado
-            cursor.execute(
-                'UPDATE usuarios_nivelacion SET estado = ?, fecha_actualizacion = CURRENT_TIMESTAMP WHERE username = ?',
-                (nuevo_estado, username)
-            )
-            
-            # Registrar en historial
-            cursor.execute(
-                'INSERT INTO historial_nivelacion (username, accion, detalles) VALUES (?, ?, ?)',
-                (username, f"estado_actualizado_{nuevo_estado}", json.dumps(detalles) if detalles else None)
-            )
-            
-            conn.commit()
-            conn.close()
+            detalles_json = json.dumps(detalles) if detalles is not None else None
+            with self._get_conn() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE usuarios_nivelacion
+                    SET estado = %s, fecha_actualizacion = NOW()
+                    WHERE username = %s;
+                    """,
+                    (nuevo_estado, username)
+                )
+                cur.execute(
+                    """
+                    INSERT INTO historial_nivelacion (username, accion, detalles)
+                    VALUES (%s, %s, %s);
+                    """,
+                    (username, f"estado_actualizado_{nuevo_estado}", detalles_json)
+                )
+                conn.commit()
             return True
         except Exception as e:
             print(f"❌ Error actualizando usuario {username}: {e}")
@@ -124,6 +144,170 @@ class NivelacionDatabase:
 
 # Instancia global para usar en toda la aplicación
 nivelacion_db = NivelacionDatabase()
+def migrar_sqlite_a_postgres(sqlite_path: str = None, batch_size: int = 1000, max_retries: int = 3):
+    """
+    Migración robusta de SQLite -> Postgres con:
+      - Inserción por lotes (batch_size).
+      - Commit por lote.
+      - Reintentos automáticos si se cierra la conexión.
+      - Porcentaje de avance.
+
+    Ejecutar UNA sola vez y luego comentar/retirar.
+    """
+    import sqlite3
+    import math
+    import time
+    from psycopg2 import OperationalError, InterfaceError
+    from psycopg2.extras import execute_values
+    from pathlib import Path
+
+    # 1) Ubicar SQLite
+    if not sqlite_path:
+        sqlite_path = Path(__file__).parent / "nivelacion_data.db"
+    if not os.path.exists(sqlite_path):
+        print(f"ℹ️ No existe {sqlite_path}, nada que migrar.")
+        return
+
+    print(f"🔄 Migrando desde SQLite: {sqlite_path}")
+
+    # 2) Leer todo desde SQLite en memoria (rápido y sencillo)
+    try:
+        sqlite_conn = sqlite3.connect(sqlite_path)
+        s_cur = sqlite_conn.cursor()
+
+        # Usuarios
+        s_cur.execute("SELECT username, estado FROM usuarios_nivelacion;")
+        usuarios = s_cur.fetchall()  # list[(username, estado)]
+
+        # Historial (puede no existir en algunas instalaciones)
+        try:
+            s_cur.execute("SELECT username, accion, COALESCE(detalles, NULL), fecha FROM historial_nivelacion;")
+            historial = s_cur.fetchall()  # list[(username, accion, detalles, fecha)]
+        except sqlite3.OperationalError:
+            historial = []
+
+        sqlite_conn.close()
+    except Exception as e:
+        print(f"❌ Error leyendo SQLite: {e}")
+        return
+
+    total_usuarios = len(usuarios)
+    total_historial = len(historial)
+    print(f"👥 Usuarios a migrar: {total_usuarios}")
+    print(f"📜 Historial a migrar: {total_historial}")
+
+    if total_usuarios == 0 and total_historial == 0:
+        print("ℹ️ No hay datos para migrar.")
+        return
+
+    # 3) Helpers de conexión y progreso
+    def _open_pg():
+        # Reutiliza el mismo método que usa tu clase para abrir conexión,
+        # pero con keepalives para más resiliencia.
+        import psycopg2
+        dsn = os.getenv("DATABASE_URL")
+        if not dsn:
+            raise RuntimeError("Falta DATABASE_URL en el entorno para migrar.")
+        return psycopg2.connect(
+            dsn,
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=5,
+        )
+
+    def _pct(i, total):
+        return (i / total) * 100 if total else 100.0
+
+    # 4) Inserción por lotes con reintentos
+    def _insertar_usuarios_lotes():
+        if total_usuarios == 0:
+            return
+        batches = math.ceil(total_usuarios / batch_size)
+        inserted = 0
+        b = 0
+        while b < batches:
+            start = b * batch_size
+            end = min(start + batch_size, total_usuarios)
+            lote = usuarios[start:end]  # [(username, estado)]
+
+            # Reintentos por conexión cerrada o similar
+            attempt = 0
+            while attempt < max_retries:
+                try:
+                    with _open_pg() as conn, conn.cursor() as cur:
+                        # Bulk insert con ON CONFLICT DO NOTHING
+                        sql = """
+                            INSERT INTO usuarios_nivelacion (username, estado)
+                            VALUES %s
+                            ON CONFLICT (username) DO NOTHING;
+                        """
+                        # execute_values pide una lista de tuplas
+                        execute_values(cur, sql, lote)
+                        conn.commit()
+
+                    inserted += len(lote)
+                    b += 1
+                    print(f"   ➡️ Usuarios migrados: {inserted}/{total_usuarios} ({_pct(inserted, total_usuarios):.1f}%)")
+                    break  # salir del bucle de reintentos para este lote
+                except (OperationalError, InterfaceError) as e:
+                    attempt += 1
+                    print(f"⚠️ Conexión caída al insertar usuarios (intento {attempt}/{max_retries}): {e}")
+                    time.sleep(1.5 * attempt)  # backoff simple
+                except Exception as e:
+                    # Error no recuperable para este lote: lo reportamos y seguimos con el siguiente
+                    print(f"❌ Error en lote de usuarios {b+1}/{batches}: {e}")
+                    b += 1
+                    break
+
+    def _insertar_historial_lotes():
+        if total_historial == 0:
+            return
+        batches = math.ceil(total_historial / batch_size)
+        inserted = 0
+        b = 0
+        while b < batches:
+            start = b * batch_size
+            end = min(start + batch_size, total_historial)
+            lote = historial[start:end]  # [(username, accion, detalles, fecha)]
+
+            attempt = 0
+            while attempt < max_retries:
+                try:
+                    with _open_pg() as conn, conn.cursor() as cur:
+                        sql = """
+                            INSERT INTO historial_nivelacion (username, accion, detalles, fecha)
+                            VALUES %s;
+                        """
+                        # Nota: si 'detalles' viene como string JSON desde SQLite, Postgres JSONB lo aceptará.
+                        # Si viene None, también es válido.
+                        execute_values(cur, sql, lote)
+                        conn.commit()
+
+                    inserted += len(lote)
+                    b += 1
+                    print(f"   ➡️ Historial migrado: {inserted}/{total_historial} ({_pct(inserted, total_historial):.1f}%)")
+                    break
+                except (OperationalError, InterfaceError) as e:
+                    attempt += 1
+                    print(f"⚠️ Conexión caída al insertar historial (intento {attempt}/{max_retries}): {e}")
+                    time.sleep(1.5 * attempt)
+                except Exception as e:
+                    print(f"❌ Error en lote de historial {b+1}/{batches}: {e}")
+                    b += 1
+                    break
+
+    # 5) Ejecutar migración por secciones
+    print("🚚 Migrando USUARIOS por lotes...")
+    _insertar_usuarios_lotes()
+
+    print("🚚 Migrando HISTORIAL por lotes...")
+    _insertar_historial_lotes()
+
+    print("✅ Migración completada (con lotes y reintentos).")
+
+
+#migrar_sqlite_a_postgres()  # si el archivo existe
 
 # ==================== FUNCIÓN DE MIGRACIÓN ====================
 def migrar_datos_existentes():
@@ -316,18 +500,38 @@ import os
 import json
 def comparar_documentos_y_generar_faltantesj(
     usuarios_path: str = "output/reporte_1003_modificado.json",
-    salida_path: str = "output/usuarios_faltantes_nivelacion.json"
+    salida_path: str = "output/usuarios_faltantes_nivelacion.json",
+    modo: str = "preload",            # "preload" (rápido: trae todos los usernames de PG) o "batch"
+    batch_size: int = 5000,           # usado en modo "batch"
+    show_progress: bool = True
 ):
     """
-    NUEVA VERSIÓN - Usa base de datos en lugar de JSON estático
+    Compara un JSON (~50k registros) contra Postgres para hallar 'faltantes' sin hacer 50k queries.
+    - modo="preload":  1 query a PG para traer todos los usernames -> compara en memoria (recomendado).
+    - modo="batch":    procesa los idnumber en lotes y consulta PG con WHERE username = ANY(%s).
+
+    Escribe los faltantes en salida_path y muestra % de avance.
     """
+    import os, json, math, time
+    import pandas as pd
+
+    def _norm_id(x):
+        if x is None:
+            return ""
+        s = str(x).strip()
+        # Normaliza números que vienen como "123.0" o con comas
+        if s.endswith(".0"):
+            s = s[:-2]
+        s = s.replace(",", "")
+        return s
+
     try:
         # ---- Cargar usuarios (1003_modificado) ----
         if not os.path.exists(usuarios_path):
             print(f"❌ Error: No existe {usuarios_path}")
             return None
 
-        with open(usuarios_path, "r", encoding="utf-8") as f:
+        with open(usuarios_path, "r", encoding="utf-8-sig") as f:
             usuarios_data = json.load(f)
 
         # Normalizar a list[dict]
@@ -338,23 +542,122 @@ def comparar_documentos_y_generar_faltantesj(
 
         if not isinstance(usuarios_rows, list) or not usuarios_rows:
             print("⚠️ El archivo de usuarios está vacío.")
+            os.makedirs(os.path.dirname(salida_path) or ".", exist_ok=True)
             with open(salida_path, "w", encoding="utf-8") as f:
                 json.dump([], f, ensure_ascii=False, indent=2)
             return salida_path
 
+        # Verificar clave mínima
         if "idnumber" not in usuarios_rows[0]:
             print("❌ El JSON de usuarios no contiene la clave 'idnumber'.")
             return None
 
-        # ---- Encontrar usuarios faltantes (COMPARACIÓN CON BASE DE DATOS) ----
-        usuarios_faltantes = []
-        for usuario in usuarios_rows:
-            username = str(usuario.get("idnumber", "")).strip()
-            if username and not nivelacion_db.usuario_existe(username):
-                usuarios_faltantes.append(usuario)
+        total = len(usuarios_rows)
+        print(f"🗂️ Registros en JSON: {total}")
+
+        # ===========================
+        #   MODO PRELOAD (rápido)
+        # ===========================
+        if modo.lower() == "preload":
+            print("⚡ Modo: PRELOAD - cargando usernames existentes desde Postgres en una sola consulta...")
+            exist_set = set()
+            try:
+                with nivelacion_db._get_conn() as conn, conn.cursor() as cur:
+                    cur.execute("SELECT username FROM usuarios_nivelacion;")
+                    exist_set = {row[0] for row in cur.fetchall()}
+                print(f"📥 Usernames ya existentes en BD: {len(exist_set)}")
+            except Exception as e:
+                print(f"❌ Error cargando usernames desde Postgres: {e}")
+                return None
+
+            usuarios_faltantes = []
+            last_print = time.time()
+            every = max(500, total // 100)  # imprime aprox. 100 veces como máximo
+
+            for i, usuario in enumerate(usuarios_rows, 1):
+                username = _norm_id(usuario.get("idnumber"))
+                if username and (username not in exist_set):
+                    usuarios_faltantes.append(usuario)
+
+                # Progreso
+                if show_progress and (i % every == 0 or i == total or time.time() - last_print > 2.0):
+                    pct = (i / total) * 100
+                    print(f"   ➡️ Progreso: {i}/{total} ({pct:.1f}%)")
+                    last_print = time.time()
+
+        # ===========================
+        #   MODO BATCH (alternativo)
+        # ===========================
+        else:
+            print(f"⚙️ Modo: BATCH (tamaño de lote = {batch_size})")
+            # Extrae y normaliza todos los idnumber (evita duplicados para reducir consultas)
+            all_ids = []
+            for u in usuarios_rows:
+                uid = _norm_id(u.get("idnumber"))
+                if uid:
+                    all_ids.append(uid)
+
+            # Mapa id -> objetos (soportando posibles repetidos por seguridad)
+            bucket = {}
+            for u in usuarios_rows:
+                uid = _norm_id(u.get("idnumber"))
+                if uid:
+                    bucket.setdefault(uid, []).append(u)
+
+            unique_ids = list(set(all_ids))
+            print(f"🔎 Ids únicos a verificar: {len(unique_ids)}")
+
+            from psycopg2 import OperationalError, InterfaceError
+            missing_ids = set()
+            batches = math.ceil(len(unique_ids) / batch_size)
+            last_print = time.time()
+
+            def _query_batch(id_list):
+                # Devuelve set con los que SÍ existen
+                existing = set()
+                with nivelacion_db._get_conn() as conn, conn.cursor() as cur:
+                    # Consulta por arreglo (evita armar IN enorme y escapa bien)
+                    cur.execute("SELECT username FROM usuarios_nivelacion WHERE username = ANY(%s);", (id_list,))
+                    for row in cur.fetchall():
+                        existing.add(row[0])
+                return existing
+
+            processed = 0
+            for b in range(batches):
+                start = b * batch_size
+                end = min(start + batch_size, len(unique_ids))
+                lote = unique_ids[start:end]
+
+                # Reintentos simples por si la conexión cae
+                attempt = 0
+                while True:
+                    try:
+                        existing = _query_batch(lote)
+                        break
+                    except (OperationalError, InterfaceError) as e:
+                        attempt += 1
+                        if attempt > 3:
+                            raise
+                        print(f"⚠️ Reconectando lote {b+1}/{batches} (intento {attempt})... {e}")
+                        time.sleep(1.5 * attempt)
+
+                # Los que faltan son los que NO están en 'existing'
+                lote_missing = set(lote) - existing
+                missing_ids.update(lote_missing)
+
+                processed += len(lote)
+                if show_progress and (time.time() - last_print > 1.5 or b + 1 == batches):
+                    pct = (processed / len(unique_ids)) * 100
+                    print(f"   ➡️ Progreso verificación: {processed}/{len(unique_ids)} ({pct:.1f}%)")
+                    last_print = time.time()
+
+            # Reconstruir objetos faltantes
+            usuarios_faltantes = []
+            for mid in missing_ids:
+                usuarios_faltantes.extend(bucket.get(mid, []))
 
         # ---- Guardar salida JSON ----
-        os.makedirs(os.path.dirname(salida_path), exist_ok=True)
+        os.makedirs(os.path.dirname(salida_path) or ".", exist_ok=True)
         with open(salida_path, "w", encoding="utf-8") as f:
             json.dump(usuarios_faltantes, f, ensure_ascii=False, indent=2)
 

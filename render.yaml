@@ -18,6 +18,19 @@ services:
         sync: false
       - key: SECRET_KEY
         sync: false
+      # Nuevas variables para la base de datos
+      - key: DB_ENGINE
+        value: postgresql
+      - key: DATABASE_URL
+        fromSecret: true  # Esto se configurará manualmente en el dashboard de Render
     healthCheckPath: "/health"
     instanceType: "micro"
     autoDeploy: true
+
+  # Agrega este servicio para la base de datos PostgreSQL
+  - type: postgres
+    name: siga-database
+    plan: free
+    ipAllowList: []  # Permitir acceso desde cualquier lugar
+    databaseName: siga_db
+    user: siga_user
