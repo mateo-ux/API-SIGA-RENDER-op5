@@ -14,7 +14,7 @@ import sqlite3
 # ==================== BASE DE DATOS POSTGRES ====================
 import os
 import json
-import psycopg2
+import psycopg
 from psycopg2.extras import RealDictCursor
 from urllib.parse import urlparse
 load_dotenv()
@@ -37,7 +37,7 @@ class NivelacionDatabase:
 
     def _get_conn(self):
         # sslmode ya puede venir en la URL; Render normalmente exige sslmode=require
-        return psycopg2.connect(self.database_url)
+        return psycopg.connect(self.database_url)
 
     def _init_database(self):
         """Crea tablas si no existen (idempotente)."""
@@ -204,7 +204,7 @@ def migrar_sqlite_a_postgres(sqlite_path: str = None, batch_size: int = 1000, ma
     def _open_pg():
         # Reutiliza el mismo método que usa tu clase para abrir conexión,
         # pero con keepalives para más resiliencia.
-        import psycopg2
+        import psycopg
         dsn = os.getenv("DATABASE_URL")
         if not dsn:
             raise RuntimeError("Falta DATABASE_URL en el entorno para migrar.")
