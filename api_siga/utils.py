@@ -1,46 +1,27 @@
-# api_siga/utils.py - VERSIÓN CORREGIDA CON BASE DE DATOS INLINE
 import os
-import sys
 from pathlib import Path
 import requests
 import pandas as pd
 from dotenv import load_dotenv
 import json
 import time
-import csv
 from datetime import datetime
 from urllib.parse import urljoin
-import sqlite3
 # ==================== BASE DE DATOS POSTGRES ====================
-import os
-import json
 import psycopg
-from psycopg2.extras import RealDictCursor
-from urllib.parse import urlparse
 load_dotenv()
-class NivelacionDatabase:
-    """
-    Implementación para PostgreSQL (Render).
-    Mantiene la misma API pública:
-      - usuario_existe(username) -> bool
-      - agregar_usuario(username, estado="pendiente") -> bool
-      - actualizar_estado_usuario(username, nuevo_estado, detalles=None) -> bool
-    """
 
+class NivelacionDatabase:
     def __init__(self):
         self.database_url = os.getenv("DATABASE_URL")
         if not self.database_url:
-            raise RuntimeError(
-                "Falta DATABASE_URL en el .env. Debe apuntar a tu Postgres de Render."
-            )
+            raise RuntimeError("Falta DATABASE_URL en el .env. Debe apuntar a tu Postgres de Render.")
         self._init_database()
 
     def _get_conn(self):
-        # sslmode ya puede venir en la URL; Render normalmente exige sslmode=require
         return psycopg.connect(self.database_url)
 
     def _init_database(self):
-        """Crea tablas si no existen (idempotente)."""
         ddl_usuarios = """
         CREATE TABLE IF NOT EXISTS usuarios_nivelacion (
             id SERIAL PRIMARY KEY,
@@ -59,7 +40,6 @@ class NivelacionDatabase:
             fecha TIMESTAMPTZ DEFAULT NOW()
         );
         """
-        # Índice útil para búsquedas por username en historial
         ddl_idx_hist_user = """
         CREATE INDEX IF NOT EXISTS idx_historial_username ON historial_nivelacion (username);
         """
@@ -71,6 +51,7 @@ class NivelacionDatabase:
                 cur.execute(ddl_idx_hist_user)
             conn.commit()
         print("✅ Tablas verificadas/creadas en PostgreSQL")
+
 
     # ----------------- MÉTODOS PÚBLICOS -----------------
 
@@ -157,8 +138,9 @@ def migrar_sqlite_a_postgres(sqlite_path: str = None, batch_size: int = 1000, ma
     import sqlite3
     import math
     import time
-    from psycopg2 import OperationalError, InterfaceError
-    from psycopg2.extras import execute_values
+    from psycopg import OperationalError, InterfaceError
+    from psycopg.extras import execute_values
+
     from pathlib import Path
 
     # 1) Ubicar SQLite
@@ -204,11 +186,10 @@ def migrar_sqlite_a_postgres(sqlite_path: str = None, batch_size: int = 1000, ma
     def _open_pg():
         # Reutiliza el mismo método que usa tu clase para abrir conexión,
         # pero con keepalives para más resiliencia.
-        import psycopg
         dsn = os.getenv("DATABASE_URL")
         if not dsn:
             raise RuntimeError("Falta DATABASE_URL en el entorno para migrar.")
-        return psycopg2.connect(
+        return psycopg.connect(
             dsn,
             keepalives=1,
             keepalives_idle=30,
@@ -607,7 +588,7 @@ def comparar_documentos_y_generar_faltantesj(
             unique_ids = list(set(all_ids))
             print(f"🔎 Ids únicos a verificar: {len(unique_ids)}")
 
-            from psycopg2 import OperationalError, InterfaceError
+            from psycopg import OperationalError, InterfaceError
             missing_ids = set()
             batches = math.ceil(len(unique_ids) / batch_size)
             last_print = time.time()
