@@ -9,6 +9,7 @@ from datetime import datetime
 from urllib.parse import urljoin
 # ==================== BASE DE DATOS POSTGRES ====================
 import psycopg
+from zoneinfo import ZoneInfo
 load_dotenv()
 
 class NivelacionDatabase:
@@ -1205,7 +1206,8 @@ class MoodleManager:
 
     def registrar_resultado(self, row, tipo, motivo, grupo=""):
         """Registrar resultado en Google Sheets con las columnas especificadas (sin cambios)."""
-        fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        fecha = datetime.now(ZoneInfo("America/Bogota")).strftime("%Y-%m-%d %H:%M:%S")
+
         datos = {
             "sheet_id": self.SHEET_ID,
             "tipo": tipo,
