@@ -1502,7 +1502,7 @@ def combinar_reportes():
     try:
         # Leer archivos desde JSON
         rows_1003 = _leer_json_lista("output/reporte_1003.json")
-        rows_992  = _leer_json_lista("output/reporte_992.json")
+        rows_992  = _leer_json_lista("output/reporte_992_completo.json")
 
         df_1003 = pd.DataFrame(rows_1003)
         df_992  = pd.DataFrame(rows_992)

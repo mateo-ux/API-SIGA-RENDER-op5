@@ -136,30 +136,42 @@ def run_option2() -> dict:
         ],
     }
 
+# siga_runner.py (añadir al final)
 
-def run_option5(periodo_992: int) -> dict:
+def run_option5() -> dict:
     """
-    Flujo JSON:
-    1) Consulta 1003 y 992 -> guarda JSON
-    2) Post-proceso: extraer columnas 1003 (JSON) y combinar con 992 (JSON)
+    Opción 5 (JSON):
+    - Consulta 1003 -> guarda output/reporte_1003.json
+    - Consulta 992 para 6 periodos y consolida -> output/reporte_992_completo.json
+    - Extrae columnas del 1003 y combina reportes
     """
-    logger.info(f"Option5: START (periodo_992={periodo_992})")
+    logger.info("Option5: START")
     _ensure_output_dir()
 
     services, access_token, token_autenticacion = _get_tokens()
 
-    logger.info("Option5: consultando 1003…")
+    # 1) 1003
+    logger.info("Option5: consultando reporte 1003…")
     res_1003 = services.consultar_reporte_1003(access_token, token_autenticacion)
     guardar_json(res_1003, "reporte_1003")  # -> output/reporte_1003.json
 
-    logger.info("Option5: consultando 992…")
-    res_992 = services.consultar_reporte_992(
-        access_token, token_autenticacion, cod_periodo_academico=periodo_992
+    # 2) 992 (6 periodos)
+    logger.info("Option5: consultando reporte 992 (6 periodos)…")
+    codigos = ["2025012710", "2025011112", "2024101510", "2024100708", "2024091608", "2024090208"]
+    ruta_992, data_992 = services.consultar_reporte_992_completo(
+        token=access_token,
+        token_autenticacion=token_autenticacion,
+        cod_periodos=codigos,
+        solo_pendientes_matricula=False,
+        outfile_path="output/reporte_992_completo.json"
     )
-    guardar_json(res_992, "reporte_992")  # -> output/reporte_992.json
+    logger.info(f"Option5: 992 consolidado en {ruta_992} (registros: {len(data_992)})")
 
-    logger.info("Option5: post-procesos JSON…")
+    # 3) Post-proceso (si aplica a tu flujo)
+    logger.info("Option5: post-proceso 1003 (extraer columnas)…")
     extraer_columnas_reporte_1003()
+
+    logger.info("Option5: combinando reportes…")
     combinar_reportes()
 
     logger.info("Option5: DONE")
@@ -168,7 +180,9 @@ def run_option5(periodo_992: int) -> dict:
         "step": "option5",
         "outputs": [
             "output/reporte_1003.json",
-            "output/reporte_992.json",
-            # agrega aquí los archivos que genere tu combinar_reportesj
+            "output/reporte_992_completo.json",
+            "output/reporte_1003_combinado.json"
+            # agrega aquí los otros archivos que tu función combine genere, si corresponde
         ],
     }
+
