@@ -13,13 +13,6 @@ from api_siga.utils import (
     combinar_reportes,                  # <-- sin "j"
 )
 
-
-
-
-
-
-
-
 def main():
     # Menú
     
@@ -106,65 +99,13 @@ def main():
             guardar_json(resultado, "reporte_997")
 
         elif opcion == "5":
-            load_dotenv()
-            BASE_URL = os.getenv("BASE_URL")
-            CLIENT_ID = os.getenv("CLIENT_ID")
-            SECRETO = os.getenv("SECRETO")
-            USERNAME = os.getenv("USERNAME_PRUEBA")
-            PASSWORD = os.getenv("PASSWORD_PRUEBA")
-
-            cliente = ApiSigaClient(BASE_URL, CLIENT_ID, SECRETO)
-            access_token = cliente.generar_token()
-
-            if not access_token:
-                print("❌ No se pudo obtener el token de acceso.")
-                return
-
-            # Autenticación (con MultipartEncoder ya funcionando)
-            from requests_toolbelt.multipart.encoder import MultipartEncoder
-            import requests
-
-            url_autenticar = f"{BASE_URL}/talentotech2/autenticar"
-            headers = {"auth_token": access_token}
-            data = MultipartEncoder(fields={"username": USERNAME, "password": PASSWORD})
-            headers["Content-Type"] = data.content_type
-
-            try:
-                response = requests.post(url_autenticar, headers=headers, data=data)
-                response.raise_for_status()
-                auth_response = response.json()
-            except Exception as e:
-                print("❌ Error al autenticar:", e)
-                return
-
-            if auth_response.get("RESPUESTA") != "1":
-                print("❌ Error al autenticar:", auth_response)
-                return
-
-            token_autenticacion = auth_response.get("TOKEN")
-            print("✅ Autenticación correcta.")
-
-            services = SigaServices(cliente)
-            # Flujo combinado (JSON)
-            resultado = services.consultar_reporte_1003(access_token, token_autenticacion)
-            guardar_json(resultado, "reporte_1003")
+            # Reutiliza la implementación central (misma idea que run_option2)
+            from op5_service import run_option5
+            # Si quieres pasar tus periodos específicos, hazlo aquí:
             codigos = ["2025012710", "2025011112", "2024101510", "2024100708", "2024091608", "2024090208"]
-            import inspect, sys
-            print("Clase real:", services.__class__)
-            print("Módulo de la clase:", services.__class__.__module__)
-            print("Archivo del módulo:", inspect.getsourcefile(services.__class__))
-            print("Tiene método consultar_reporte_992_completo?:", hasattr(services, "consultar_reporte_992_completo"))
-            print("Métodos disponibles:", [m for m in dir(services) if m.startswith("consultar_reporte")])
-            resultado = services.consultar_reporte_992_completo(
-            token=access_token,
-            token_autenticacion=token_autenticacion,
-            cod_periodos=codigos,
-            solo_pendientes_matricula=False,  # o True si lo necesitas
-            outfile_path="output/reporte_992_completo.json"  # opcional; si no lo pasas, genera uno con timestamp
-        )
-
-            extraer_columnas_reporte_1003()
-            combinar_reportes()  # <-- sin "j"
+            resultado = run_option5(codigos=codigos)
+            print("✅ Opción 5 completada.")
+            print(f"Registros combinados: {len(resultado.get('reporte_1003_combinado', []))}")
 
         else:
             print("❌ Opción inválida.")
