@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, Header, HTTPException, Query, BackgroundTasks
 from fastapi.responses import PlainTextResponse, JSONResponse
 from dotenv import load_dotenv
-from siga_runner import run_option2, run_option5
+from siga_runner import OUTPUT_DIR, _ensure_output_dir, run_option2, run_option5
+from utils import combinar_reportes, extraer_columnas_reporte_1003, guardar_json
 
 # Cargar variables de entorno
 load_dotenv()
@@ -62,43 +63,52 @@ def run_opt2(background_tasks: BackgroundTasks, x_api_key: str | None = Header(d
     background_tasks.add_task(task)
     return PlainTextResponse("ACCEPTED", status_code=202)
 
-@app.post("/run/option5")
-def run_opt5(
-    periodo_992: str = Query(..., description="Uno o varios periodos separados por coma. Ej: 2025011112 o 2025012710,2025011112"),
-    solo_pendientes_matricula: bool = Query(False),
-    background_tasks: BackgroundTasks = None,
-    x_api_key: str | None = Header(default=None),
-):
-    """Dispara Opción 5 en background. Acepta 1+ periodos en 'periodo_992'. Responde JSON 202."""
-    _check_key(x_api_key)
+# ... imports arriba ...
+from typing import List, Dict, Any, Optional
 
-    # Parseo flexible: "2025,2024" -> ["2025","2024"]
-    codigos = [c.strip() for c in str(periodo_992).split(",") if c.strip()]
+def run_option5(
+    codigos: Optional[List[str]] = None,
+    solo_pendientes_matricula: bool = False,   # <- NUEVO
+    outfile_path: str = os.path.join(OUTPUT_DIR, "reporte_1003_combinado.json"),
+) -> Dict[str, Any]:
+    logger.info("Option5: START")
+    _ensure_output_dir()
+
     if not codigos:
-        raise HTTPException(status_code=422, detail="periodo_992 vacío")
+        codigos = ["2025012710", "2025011112", "2024101510", "2024100708", "2024091608", "2024090208"]
 
-    def task():
-        LAST["opt5_started"] = datetime.now(timezone.utc).isoformat()
-        LAST["opt5_error"] = None
-        try:
-            # run_option5 debe aceptar 'codigos' y 'solo_pendientes_matricula'
-            run_option5(codigos=codigos, solo_pendientes_matricula=solo_pendientes_matricula)
-        except Exception as e:
-            LAST["opt5_error"] = str(e)
-            logger.exception("Option5: ERROR")
-        finally:
-            LAST["opt5_finished"] = datetime.now(timezone.utc).isoformat()
+    services, access_token, token_autenticacion = _get_tokens()
 
-    background_tasks.add_task(task)
-    return JSONResponse(
-        {
-            "status": "ACCEPTED",
-            "queued": True,
-            "periodos": codigos,
-            "solo_pendientes_matricula": solo_pendientes_matricula,
-        },
-        status_code=202,
+    logger.info("Option5: consultando reporte 1003…")
+    res_1003 = services.consultar_reporte_1003(access_token, token_autenticacion)
+    guardar_json(res_1003, "reporte_1003")
+
+    try:
+        extraer_columnas_reporte_1003()
+    except Exception as e:
+        logger.warning(f"extraer_columnas_reporte_1003() no crítico: {e}")
+
+    logger.info("Option5: consultando reporte 992 completo…")
+    _ = services.consultar_reporte_992_completo(
+        token=access_token,
+        token_autenticacion=token_autenticacion,
+        cod_periodos=codigos,
+        solo_pendientes_matricula=solo_pendientes_matricula,   # <- USAR EL PARAMETRO
+        outfile_path=os.path.join(OUTPUT_DIR, "reporte_992_completo.json"),
     )
+
+    logger.info("Option5: combinando reportes (1003 + 992)…")
+    combinar_reportes()
+
+    payload = []
+    if os.path.exists(outfile_path):
+        import json
+        with open(outfile_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        payload = data.get("reporte_1003_combinado", data if isinstance(data, list) else [])
+    logger.info(f"Option5: DONE. Registros combinados: {len(payload)}")
+    return {"ok": True, "step": "option5", "reporte_1003_combinado": payload}
+
 @app.get("/reporte_1003_combinado")
 def get_reporte_1003_combinado(x_api_key: str | None = Header(default=None)):
     _check_key(x_api_key)
