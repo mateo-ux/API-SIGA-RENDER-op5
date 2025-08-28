@@ -64,18 +64,25 @@ def run_opt2(background_tasks: BackgroundTasks, x_api_key: str | None = Header(d
 
 @app.post("/run/option5")
 def run_opt5(
-    periodo_992: int = Query(..., description="Ej: 2025011112"),
+    periodo_992: str = Query(..., description="Uno o varios periodos separados por coma. Ej: 2025011112 o 2025012710,2025011112"),
+    solo_pendientes_matricula: bool = Query(False),
     background_tasks: BackgroundTasks = None,
     x_api_key: str | None = Header(default=None),
 ):
-    """Dispara Opción 5 en background. Responde rápido para evitar timeouts."""
+    """Dispara Opción 5 en background. Acepta 1+ periodos en 'periodo_992'. Responde JSON 202."""
     _check_key(x_api_key)
+
+    # Parseo flexible: "2025,2024" -> ["2025","2024"]
+    codigos = [c.strip() for c in str(periodo_992).split(",") if c.strip()]
+    if not codigos:
+        raise HTTPException(status_code=422, detail="periodo_992 vacío")
 
     def task():
         LAST["opt5_started"] = datetime.now(timezone.utc).isoformat()
         LAST["opt5_error"] = None
         try:
-            run_option5(periodo_992=periodo_992)
+            # run_option5 debe aceptar 'codigos' y 'solo_pendientes_matricula'
+            run_option5(codigos=codigos, solo_pendientes_matricula=solo_pendientes_matricula)
         except Exception as e:
             LAST["opt5_error"] = str(e)
             logger.exception("Option5: ERROR")
@@ -83,9 +90,25 @@ def run_opt5(
             LAST["opt5_finished"] = datetime.now(timezone.utc).isoformat()
 
     background_tasks.add_task(task)
-    return PlainTextResponse("ACCEPTED", status_code=202)
-
-# Añadido para permitir que uvicorn ejecute la app
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    return JSONResponse(
+        {
+            "status": "ACCEPTED",
+            "queued": True,
+            "periodos": codigos,
+            "solo_pendientes_matricula": solo_pendientes_matricula,
+        },
+        status_code=202,
+    )
+@app.get("/reporte_1003_combinado")
+def get_reporte_1003_combinado(x_api_key: str | None = Header(default=None)):
+    _check_key(x_api_key)
+    path = os.path.join("output", "reporte_1003_combinado.json")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Aún no hay reporte combinado")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = f.read()
+        return JSONResponse(content={"reporte_1003_combinado": json.loads(data)})
+    except Exception as e:
+        logger.exception("No se pudo leer el combinado")
+        raise HTTPException(status_code=500, detail=str(e))
