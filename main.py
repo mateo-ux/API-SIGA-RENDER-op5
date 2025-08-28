@@ -99,13 +99,11 @@ def main():
             guardar_json(resultado, "reporte_997")
 
         elif opcion == "5":
-            # Reutiliza la implementación central (misma idea que run_option2)
-            from op5_service import run_option5
-            # Si quieres pasar tus periodos específicos, hazlo aquí:
-            codigos = ["2025012710", "2025011112", "2024101510", "2024100708", "2024091608", "2024090208"]
-            resultado = run_option5(codigos=codigos)
-            print("✅ Opción 5 completada.")
-            print(f"Registros combinados: {len(resultado.get('reporte_1003_combinado', []))}")
+            from siga_runner import run_option5
+            codigos = ["2025012710","2025011112","2024101510","2024100708","2024091608","2024090208"]
+            r = run_option5(codigos=codigos, solo_pendientes_matricula=False)
+            print("✅ Opción 5 completada. Registros combinados:", len(r.get("reporte_1003_combinado", [])))
+
 
         else:
             print("❌ Opción inválida.")
